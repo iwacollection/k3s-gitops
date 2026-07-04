@@ -6,7 +6,7 @@ metadata:
   labels:
     app: nginx-app
 spec:
-  replicas: 1
+  replicas: 3  # 从 1 改成 3
   selector:
     matchLabels:
       app: nginx-app
@@ -17,13 +17,6 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginx:latest
+        image: nginx:1.25  # 从 nginx:latest 改成 nginx:1.25
         ports:
         - containerPort: 80
-        resources:
-          limits:
-            memory: "128Mi"
-            cpu: "100m"
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
