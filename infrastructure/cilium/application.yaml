@@ -20,11 +20,16 @@ spec:
             replicas: 1
           ui:
             enabled: true
-        kubeProxyReplacement: strict
+        kubeProxyReplacement: disabled
         ipam:
           mode: kubernetes
         operator:
           replicas: 1
+        cgroup:
+          autoMount:
+            enabled: false
+          hostRoot: /sys/fs/cgroup
+        rollOutCiliumPods: true
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system
