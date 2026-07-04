@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/iwacollection/k3s-gitops.git
+    targetRevision: main
+    path: infrastructure/cilium
+    helm:
+      values: |
+        hubble:
+          enabled: true
+          relay:
+            enabled: true
+            replicas: 1
+          ui:
+            enabled: true
+        kubeProxyReplacement: strict
+        ipam:
+          mode: kubernetes
+        operator:
+          replicas: 1
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=false
