@@ -1,8 +1,17 @@
-apiVersion: kustomize.toolkit.io/v1beta1
+apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+
 resources:
   - ../../base
+
 namespace: default
-patchesStrategicMerge:
-  # 可以在这里添加针对 dev 环境的补丁
-  # 例如修改副本数或镜像版本
+
+# 如果有需要覆盖的配置，可以在这里添加补丁
+# patches:
+#   - target:
+#       kind: Deployment
+#       name: nginx-app
+#     patch: |-
+#       - op: replace
+#         path: /spec/replicas
+#         value: 2
