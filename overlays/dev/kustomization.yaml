@@ -1,1 +1,8 @@
-
+apiVersion: kustomize.toolkit.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+namespace: default
+patchesStrategicMerge:
+  # 可以在这里添加针对 dev 环境的补丁
+  # 例如修改副本数或镜像版本
