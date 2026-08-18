@@ -8,7 +8,7 @@ resource "azurerm_container_registry" "cicd" {
   name                = var.acr_name
   resource_group_name = azurerm_resource_group.cicd.name
   location            = azurerm_resource_group.cicd.location
-  sku                 = "Premium"
+  sku                 = "Standard"
   admin_enabled       = false
   tags                = var.tags
 }
