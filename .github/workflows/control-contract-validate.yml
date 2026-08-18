@@ -56,6 +56,19 @@ jobs:
             --output /tmp/workload-backend.hcl
           grep -F 'key                  = "workload/dev/payment.tfstate"' /tmp/workload-backend.hcl
 
+      - name: Test catalog request backend rendering
+        env:
+          TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
+        run: |
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment dev \
+            --service acr \
+            --request payment-acr \
+            --auth oidc \
+            --output /tmp/catalog-backend.hcl
+          grep -F 'key                  = "catalog/dev/acr/payment-acr.tfstate"' /tmp/catalog-backend.hcl
+
       - name: Verify no Terraform state is tracked
         shell: bash
         run: |
