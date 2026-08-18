@@ -30,6 +30,12 @@ jobs:
           required=(
             enterprise-cicd/architecture
             enterprise-cicd/contracts
+            enterprise-cicd/iac-catalog
+            enterprise-cicd/iac-catalog/services/_template
+            enterprise-cicd/iac-catalog/services/acr/v1
+            enterprise-cicd/iac-requests/dev
+            enterprise-cicd/iac-requests/test
+            enterprise-cicd/iac-requests/prod
             enterprise-cicd/terraform/bootstrap
             enterprise-cicd/terraform/state
             enterprise-cicd/terraform/modules/resource-group
