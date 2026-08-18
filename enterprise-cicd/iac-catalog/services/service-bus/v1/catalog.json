@@ -7,5 +7,5 @@
   "requestSchema": "request.schema.json",
   "defaults": "defaults.json",
   "policy": "policy.json",
-  "lifecycle": "preview"
+  "lifecycle": "active"
 }

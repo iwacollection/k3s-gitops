@@ -8,10 +8,10 @@ resource "azurerm_managed_redis" "this" {
   tags                      = var.tags
 
   default_database {
-    access_keys_authentication_enabled             = false
-    client_protocol                                = "Encrypted"
-    clustering_policy                              = var.clustering_policy
-    eviction_policy                                = var.eviction_policy
-    persistence_redis_database_backup_frequency    = var.persistence_redis_database_backup_frequency
+    access_keys_authentication_enabled          = false
+    client_protocol                             = "Encrypted"
+    clustering_policy                           = var.clustering_policy
+    eviction_policy                             = var.eviction_policy
+    persistence_redis_database_backup_frequency = var.persistence_redis_database_backup_frequency
   }
 }

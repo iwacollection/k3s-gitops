@@ -1,5 +1,5 @@
 {
-  "dev": {"enabled": true, "allowedSku": ["Standard"], "requireLocalAuthDisabled": true, "requirePublicNetworkDisabled": true, "requiresApproval": false},
-  "test": {"enabled": true, "allowedSku": ["Standard", "Premium"], "requireLocalAuthDisabled": true, "requirePublicNetworkDisabled": true, "requiresApproval": false},
+  "dev": {"enabled": true, "allowedSku": ["Premium"], "requireLocalAuthDisabled": true, "requirePublicNetworkDisabled": true, "requiresApproval": false},
+  "test": {"enabled": true, "allowedSku": ["Premium"], "requireLocalAuthDisabled": true, "requirePublicNetworkDisabled": true, "requiresApproval": false},
   "prod": {"enabled": true, "allowedSku": ["Premium"], "requireLocalAuthDisabled": true, "requirePublicNetworkDisabled": true, "requiresApproval": true}
 }

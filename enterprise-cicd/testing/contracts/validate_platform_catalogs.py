@@ -32,7 +32,15 @@ for path in (ROOT / "iac-catalog" / "services").glob("*/v*/catalog.json"):
     require((ROOT.parent / catalog["terraformModule"]).is_dir(), f"{key}: Terraform module does not exist")
     require((ROOT.parent / catalog["rootStack"]).is_dir(), f"{key}: root stack does not exist")
 
-required_iac = {"acr/v1", "storage/v1", "key-vault/v1", "managed-identity/v1", "service-bus/v1"}
+required_iac = {
+    "acr/v1",
+    "storage/v1",
+    "key-vault/v1",
+    "managed-identity/v1",
+    "service-bus/v1",
+    "managed-redis/v1",
+    "postgresql-flexible/v1",
+}
 require(required_iac <= set(iac_catalogs), f"missing required IaC catalog products: {sorted(required_iac - set(iac_catalogs))}")
 
 storage_policy = load(ROOT / "iac-catalog" / "services" / "storage" / "v1" / "policy.json")
@@ -40,11 +48,27 @@ require(storage_policy["prod"].get("requirePublicNetworkDisabled") is True, "sto
 require(storage_policy["prod"].get("requireSharedKeyDisabled") is True, "storage PROD must disable Shared Key")
 require(storage_policy["prod"].get("requireBlobVersioning") is True, "storage PROD must require versioning")
 
-for preview_service in ("key-vault", "service-bus"):
-    catalog = iac_catalogs[f"{preview_service}/v1"]
-    policy = load(ROOT / "iac-catalog" / "services" / preview_service / "v1" / "policy.json")
-    require(catalog["lifecycle"] == "preview", f"{preview_service}: must remain preview until private networking is governed")
-    require(policy["prod"].get("enabled") is False, f"{preview_service}: PROD must be blocked until private networking is governed")
+bindings = load(ROOT / "contracts" / "environment-bindings.json")
+for environment in ("dev", "test", "prod"):
+    network = bindings["environments"][environment]["network"]
+    require(network.get("privateEndpointSubnet"), f"{environment}: private endpoint subnet binding is required")
+    require(network.get("postgresDelegatedSubnet"), f"{environment}: PostgreSQL delegated subnet binding is required")
+
+for private_service in ("key-vault", "service-bus", "managed-redis"):
+    catalog = iac_catalogs[f"{private_service}/v1"]
+    policy = load(ROOT / "iac-catalog" / "services" / private_service / "v1" / "policy.json")
+    require(catalog["lifecycle"] == "active", f"{private_service}: private-ready product should be active")
+    require(policy["prod"].get("enabled") is True, f"{private_service}: PROD should be enabled after governed private networking")
+    require(policy["prod"].get("requirePublicNetworkDisabled") is True, f"{private_service}: PROD must disable public network access")
+
+service_bus_policy = load(ROOT / "iac-catalog" / "services" / "service-bus" / "v1" / "policy.json")
+for environment in ("dev", "test", "prod"):
+    require(service_bus_policy[environment].get("allowedSku") == ["Premium"], "Service Bus private networking requires Premium SKU")
+
+postgres_catalog = iac_catalogs["postgresql-flexible/v1"]
+postgres_policy = load(ROOT / "iac-catalog" / "services" / "postgresql-flexible" / "v1" / "policy.json")
+require(postgres_catalog["lifecycle"] == "preview", "PostgreSQL remains preview until the platform Entra DBA binding is complete")
+require(postgres_policy["prod"].get("enabled") is False, "PostgreSQL PROD must remain blocked until Entra DBA binding exists")
 
 require(iac_catalogs["managed-identity/v1"]["lifecycle"] == "active", "managed identity v1 should be active")
 
