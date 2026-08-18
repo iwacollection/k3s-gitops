@@ -14,7 +14,7 @@ CLUSTER_NAME="k8s-test-cicd"
 CONFIG_NAME="enterprise-cicd"
 CONFIG_NAMESPACE="flux-system"
 REPO_URL="https://github.com/iwacollection/k3s-gitops"
-BRANCH="main"
+BRANCH="gitops/dev"
 
 command -v az >/dev/null 2>&1 || {
   echo "Azure CLI is required." >&2
@@ -50,7 +50,7 @@ printf '\n'
 if [[ "$APPLY" -ne 1 ]]; then
   echo
   echo "PLAN ONLY: no Azure or AKS resources were changed."
-  echo "Re-run with --apply only after this control-plane branch is merged and approvals are complete."
+  echo "Re-run with --apply to create the DEV Flux configuration."
   exit 0
 fi
 
@@ -58,12 +58,6 @@ echo
 az account show --query '{subscription:name,subscriptionId:id,tenantId:tenantId}' -o table
 
 echo
-read -r -p "Type APPLY-FLUX to continue: " confirmation
-if [[ "$confirmation" != "APPLY-FLUX" ]]; then
-  echo "Cancelled."
-  exit 3
-fi
-
 "${cmd[@]}"
 
 echo
@@ -72,4 +66,5 @@ az k8s-configuration flux show \
   --cluster-name "$CLUSTER_NAME" \
   --cluster-type managedClusters \
   --name "$CONFIG_NAME" \
-  -o table
+  --query '{name:name,provisioningState:provisioningState,repositoryUrl:gitRepository.url,branch:gitRepository.ref.branch}' \
+  -o json
