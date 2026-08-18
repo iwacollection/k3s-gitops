@@ -27,6 +27,11 @@ def main() -> None:
         fail("invalid application definition")
 
     spec = application["spec"]
+    source_path = spec.get("sourcePath", ".")
+    source = Path(source_path)
+    if source.is_absolute() or ".." in source.parts:
+        fail(f"unsafe application sourcePath: {source_path}")
+
     profile_name = spec["buildProfile"]
     profile_path = ROOT / "ci-catalog" / profile_name / "profile.json"
     if not profile_path.is_file():
@@ -40,6 +45,7 @@ def main() -> None:
     resolved = {
         "application": application["metadata"]["name"],
         "owner": application["metadata"]["owner"],
+        "sourcePath": source.as_posix(),
         "buildProfile": profile_name,
         "buildImage": build["buildImage"],
         "dependencyProxy": build["dependencyProxy"],

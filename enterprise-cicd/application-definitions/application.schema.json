@@ -19,6 +19,7 @@
       "type": "object",
       "required": ["buildProfile", "artifact", "deployment"],
       "properties": {
+        "sourcePath": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[a-zA-Z0-9._/-]+$"},
         "buildProfile": {"type": "string"},
         "artifact": {
           "type": "object",

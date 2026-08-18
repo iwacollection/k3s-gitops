@@ -1,0 +1,406 @@
+name: Reusable Application CI v2
+
+on:
+  workflow_call:
+    inputs:
+      application_definition:
+        description: Path to platform Application definition JSON.
+        required: true
+        type: string
+      acr_name:
+        description: Azure Container Registry name used for platform build and application images.
+        required: true
+        type: string
+      github_environment:
+        description: Governed GitHub Environment mapped to the platform OIDC binding.
+        required: false
+        default: dev
+        type: string
+    outputs:
+      application:
+        value: ${{ jobs.resolve.outputs.application }}
+      artifact_repository:
+        value: ${{ jobs.resolve.outputs.artifact_repository }}
+      artifact_digest:
+        value: ${{ jobs.image-build.outputs.artifact_digest }}
+    secrets:
+      MAVEN_PROXY_URL:
+        required: false
+      PYPI_INDEX_URL:
+        required: false
+      GO_PROXY_URL:
+        required: false
+      CONAN_REMOTE_URL:
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      application: ${{ steps.resolve.outputs.application }}
+      owner: ${{ steps.resolve.outputs.owner }}
+      source_path: ${{ steps.resolve.outputs.source_path }}
+      build_image: ${{ steps.resolve.outputs.build_image }}
+      prepare_command: ${{ steps.resolve.outputs.prepare_command }}
+      verify_command: ${{ steps.resolve.outputs.verify_command }}
+      package_command: ${{ steps.resolve.outputs.package_command }}
+      artifact_repository: ${{ steps.resolve.outputs.artifact_repository }}
+      dockerfile: ${{ steps.resolve.outputs.dockerfile }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve governed application definition
+        id: resolve
+        shell: bash
+        env:
+          APPLICATION_DEFINITION: ${{ inputs.application_definition }}
+        run: |
+          set -euo pipefail
+          case "$APPLICATION_DEFINITION" in enterprise-cicd/application-definitions/*.json) ;; *) echo 'Application definition must be under enterprise-cicd/application-definitions/.' >&2; exit 1 ;; esac
+          python enterprise-cicd/ci-scripts/common/resolve_application.py --application "$APPLICATION_DEFINITION" --output /tmp/application-resolved.json
+          test "$(jq -r .artifactType /tmp/application-resolved.json)" = container
+          SOURCE_PATH="$(jq -r .sourcePath /tmp/application-resolved.json)"
+          test -d "$SOURCE_PATH"
+          case "$SOURCE_PATH" in /*|../*|*/../*|*/..) echo "unsafe sourcePath: $SOURCE_PATH" >&2; exit 1 ;; esac
+          echo "application=$(jq -r .application /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "owner=$(jq -r .owner /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "source_path=$SOURCE_PATH" >> "$GITHUB_OUTPUT"
+          echo "build_image=$(jq -r .buildImage /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "prepare_command=$(jq -r .prepareCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "verify_command=$(jq -r .verifyCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "package_command=$(jq -r .packageCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "artifact_repository=$(jq -r .artifactRepository /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "dockerfile=$(jq -r .dockerfile /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+
+  source-scan:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source security scan
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ needs.resolve.outputs.source_path }}
+          scanners: vuln,secret,misconfig
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+  build-test:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.github_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve governed OIDC binding
+        id: auth
+        shell: bash
+        env:
+          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+      - name: Prepare dependency cache and proxy configuration
+        id: prepare
+        shell: bash
+        env:
+          SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
+          MAVEN_PROXY_URL: ${{ secrets.MAVEN_PROXY_URL }}
+          PYPI_INDEX_URL: ${{ secrets.PYPI_INDEX_URL }}
+          GO_PROXY_URL: ${{ secrets.GO_PROXY_URL }}
+          CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/ci-scripts/common/prepare_build_env.py --application '${{ inputs.application_definition }}' --workspace "$GITHUB_WORKSPACE/$SOURCE_PATH" --output /tmp/platform-build.json --env-file /tmp/platform-build.env --config-dir /tmp/platform-config
+          echo "cache_key=$(jq -r .cacheKey /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+          echo "cache_dir=$(jq -r .cacheDir /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+          echo "pre_command=$(jq -r .preCommand /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+      - name: Restore platform dependency cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.prepare.outputs.cache_dir }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.cache_key }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-platform-ci-
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+      - name: Resolve immutable platform build image
+        id: build-image
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+          BUILD_IMAGE: ${{ needs.resolve.outputs.build_image }}
+        run: |
+          set -euo pipefail
+          NAME="${BUILD_IMAGE%:*}"
+          VERSION="${BUILD_IMAGE##*:}"
+          LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
+          DIGEST="$(az acr repository show --name "$ACR_NAME" --image "build/$NAME:$VERSION" --query digest -o tsv)"
+          test -n "$DIGEST"
+          az acr login --name "$ACR_NAME"
+          echo "image_ref=$LOGIN_SERVER/build/$NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Compile, test and package in immutable platform build image
+        shell: bash
+        env:
+          SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
+          IMAGE_REF: ${{ steps.build-image.outputs.image_ref }}
+          PREPARE_COMMAND: ${{ needs.resolve.outputs.prepare_command }}
+          VERIFY_COMMAND: ${{ needs.resolve.outputs.verify_command }}
+          PACKAGE_COMMAND: ${{ needs.resolve.outputs.package_command }}
+          PRE_COMMAND: ${{ steps.prepare.outputs.pre_command }}
+          CACHE_DIR: ${{ steps.prepare.outputs.cache_dir }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REF"
+          docker run --rm --user "$(id -u):$(id -g)" --env-file /tmp/platform-build.env -v "$GITHUB_WORKSPACE/$SOURCE_PATH:/workspace" -v "$CACHE_DIR:/platform-cache" -v "/tmp/platform-config:/platform-config:ro" -w /workspace "$IMAGE_REF" sh -c "$PRE_COMMAND && $PREPARE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
+      - name: Package compiled application workspace
+        shell: bash
+        env:
+          SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
+        run: |
+          set -euo pipefail
+          tar --exclude='./.venv' --exclude='./.platform-cache' --exclude='./__pycache__' -czf /tmp/build-workspace.tgz -C "$GITHUB_WORKSPACE/$SOURCE_PATH" .
+      - name: Upload compiled workspace
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-workspace-${{ needs.resolve.outputs.application }}-${{ github.sha }}
+          path: /tmp/build-workspace.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  image-build:
+    needs: [resolve, source-scan, build-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.github_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      artifact_digest: ${{ steps.artifact.outputs.digest }}
+      login_server: ${{ steps.acr.outputs.login_server }}
+      image_ref: ${{ steps.artifact.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve governed OIDC binding
+        id: auth
+        shell: bash
+        env:
+          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+      - name: Download compiled workspace
+        uses: actions/download-artifact@v5
+        with:
+          name: compiled-workspace-${{ needs.resolve.outputs.application }}-${{ github.sha }}
+          path: /tmp/compiled-workspace
+      - name: Restore isolated application build context
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/app-build-context
+          tar -xzf /tmp/compiled-workspace/build-workspace.tgz -C /tmp/app-build-context
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+      - name: Login to ACR
+        id: acr
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME"
+          echo "login_server=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Build immutable application image with SBOM and provenance
+        shell: bash
+        env:
+          LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          REPOSITORY: ${{ needs.resolve.outputs.artifact_repository }}
+          DOCKERFILE: ${{ needs.resolve.outputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          IMAGE="$LOGIN_SERVER/$REPOSITORY:$GITHUB_SHA"
+          docker buildx build --pull --push --sbom=true --provenance=mode=max -f "/tmp/app-build-context/$DOCKERFILE" -t "$IMAGE" /tmp/app-build-context
+      - name: Resolve immutable artifact digest
+        id: artifact
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+          LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          REPOSITORY: ${{ needs.resolve.outputs.artifact_repository }}
+        run: |
+          set -euo pipefail
+          DIGEST="$(az acr repository show --name "$ACR_NAME" --image "$REPOSITORY:$GITHUB_SHA" --query digest -o tsv)"
+          test -n "$DIGEST"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$LOGIN_SERVER/$REPOSITORY@$DIGEST" >> "$GITHUB_OUTPUT"
+
+  image-scan:
+    needs: [resolve, image-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.github_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve governed OIDC binding
+        id: auth
+        shell: bash
+        env:
+          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+      - run: az acr login --name '${{ inputs.acr_name }}'
+      - name: Container vulnerability scan
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ needs.image-build.outputs.image_ref }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+  sbom:
+    needs: [resolve, image-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.github_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve governed OIDC binding
+        id: auth
+        shell: bash
+        env:
+          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+      - run: az acr login --name '${{ inputs.acr_name }}'
+      - name: Generate evidence SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ needs.image-build.outputs.image_ref }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ needs.resolve.outputs.application }}-${{ github.sha }}
+          path: sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  sign:
+    needs: [resolve, image-build, image-scan, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.github_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve governed OIDC binding
+        id: auth
+        shell: bash
+        env:
+          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+      - run: az acr login --name '${{ inputs.acr_name }}'
+      - uses: sigstore/cosign-installer@v4.1.2
+      - name: Sign immutable artifact with GitHub OIDC
+        env:
+          IMAGE: ${{ needs.image-build.outputs.image_ref }}
+        run: cosign sign --yes "$IMAGE"
+
+  release-evidence:
+    needs: [resolve, image-build, image-scan, sbom, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: sbom-${{ needs.resolve.outputs.application }}-${{ github.sha }}
+          path: .platform-release
+      - name: Emit release metadata
+        shell: bash
+        env:
+          APP: ${{ needs.resolve.outputs.application }}
+          OWNER: ${{ needs.resolve.outputs.owner }}
+          REPOSITORY: ${{ needs.image-build.outputs.login_server }}/${{ needs.resolve.outputs.artifact_repository }}
+          DIGEST: ${{ needs.image-build.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          jq -n --arg application "$APP" --arg owner "$OWNER" --arg sourceCommit "$GITHUB_SHA" --arg repository "$REPOSITORY" --arg digest "$DIGEST" '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,owner:$owner,sourceCommit:$sourceCommit,artifact:{repository:$repository,digest:$digest},evidence:{sbom:"sbom.spdx.json",signed:true,provenance:true,sourceScan:true,containerScan:true}}' > .platform-release/artifact.json
+          cat .platform-release/artifact.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ needs.resolve.outputs.application }}-${{ github.sha }}
+          path: .platform-release/
+          if-no-files-found: error
+          retention-days: 30

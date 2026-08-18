@@ -1,0 +1,23 @@
+name: Platform Smoke Application CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/platform-smoke-application-ci.yml'
+      - '.github/workflows/reusable-application-ci-v2.yml'
+      - 'enterprise-cicd/application-definitions/platform-smoke-api.json'
+      - 'enterprise-cicd/application-definitions/application.schema.json'
+      - 'enterprise-cicd/ci-scripts/common/resolve_application.py'
+      - 'enterprise-cicd/testing/e2e/platform-smoke-api/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  application-ci:
+    uses: ./.github/workflows/reusable-application-ci-v2.yml
+    with:
+      application_definition: enterprise-cicd/application-definitions/platform-smoke-api.json
+      acr_name: acrcicdc12c3a3699d8
+      github_environment: dev
