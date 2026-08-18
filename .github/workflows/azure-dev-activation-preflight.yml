@@ -1,0 +1,193 @@
+name: Azure DEV Activation Preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/azure-dev-activation-preflight.yml'
+      - 'enterprise-cicd/gitops/clusters/aks-automatic-lab/cluster.json'
+      - 'enterprise-cicd/activation/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-dev-activation-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Read-only Azure DEV activation preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate platform activation contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/activation/validate_readiness.py --output /tmp/platform-readiness.json
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve governed DEV target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/gitops/clusters/aks-automatic-lab/cluster.json
+          test -f "$BINDING"
+          test "$(jq -r .metadata.environment "$BINDING")" = dev
+
+          RG="$(jq -r .spec.azure.resourceGroup "$BINDING")"
+          CLUSTER="$(jq -r .spec.azure.clusterName "$BINDING")"
+          CLUSTER_TYPE="$(jq -r .spec.azure.clusterType "$BINDING")"
+          FLUX_NAME="$(jq -r .spec.flux.configurationName "$BINDING")"
+          FLUX_KUSTOMIZATION="$(jq -r '.spec.flux.kustomizations[] | select(.name == "apps-dev") | .name' "$BINDING")"
+
+          test -n "$RG"
+          test -n "$CLUSTER"
+          test -n "$CLUSTER_TYPE"
+          test -n "$FLUX_NAME"
+          test -n "$FLUX_KUSTOMIZATION"
+
+          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
+          echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
+          echo "cluster_type=$CLUSTER_TYPE" >> "$GITHUB_OUTPUT"
+          echo "flux_name=$FLUX_NAME" >> "$GITHUB_OUTPUT"
+          echo "flux_kustomization=$FLUX_KUSTOMIZATION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Azure subscription and DEV resource group
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+        run: |
+          set -euo pipefail
+          az account show --query '{subscription:name,subscriptionId:id,tenantId:tenantId}' -o json
+          az group show --name "$RG" --query '{name:name,location:location,id:id}' -o json
+
+      - name: Verify governed AKS target
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster }}
+        run: |
+          set -euo pipefail
+          az aks show \
+            --resource-group "$RG" \
+            --name "$CLUSTER" \
+            --query '{name:name,provisioningState:provisioningState,kubernetesVersion:kubernetesVersion,privateFqdn:privateFqdn,fqdn:fqdn}' \
+            -o json
+
+      - name: Resolve governed ACR
+        id: acr
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+        run: |
+          set -euo pipefail
+          ACR_NAME="$(az acr list --resource-group "$RG" --query "[?tags.platform=='enterprise-cicd'] | [0].name" -o tsv)"
+          if [ -z "$ACR_NAME" ]; then
+            echo "No ACR tagged platform=enterprise-cicd found in $RG." >&2
+            echo "Available ACRs:" >&2
+            az acr list --resource-group "$RG" --query '[].{name:name,loginServer:loginServer,tags:tags}' -o table >&2 || true
+            exit 1
+          fi
+          LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
+          test -n "$LOGIN_SERVER"
+          echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          az acr show --name "$ACR_NAME" --query '{name:name,loginServer:loginServer,sku:sku.name,provisioningState:provisioningState}' -o json
+
+      - name: Verify ACR data-plane read access
+        shell: bash
+        env:
+          ACR_NAME: ${{ steps.acr.outputs.name }}
+        run: |
+          set -euo pipefail
+          az acr repository list --name "$ACR_NAME" --top 5 -o json >/tmp/acr-repositories.json
+          cat /tmp/acr-repositories.json
+
+      - name: Install Flux Azure CLI extension
+        shell: bash
+        run: az extension add --name k8s-configuration --upgrade --yes
+
+      - name: Verify Flux configuration and DEV kustomization
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster }}
+          CLUSTER_TYPE: ${{ steps.target.outputs.cluster_type }}
+          FLUX_NAME: ${{ steps.target.outputs.flux_name }}
+          KUSTOMIZATION: ${{ steps.target.outputs.flux_kustomization }}
+        run: |
+          set -euo pipefail
+          az k8s-configuration flux show \
+            --resource-group "$RG" \
+            --cluster-name "$CLUSTER" \
+            --cluster-type "$CLUSTER_TYPE" \
+            --name "$FLUX_NAME" \
+            --query '{name:name,provisioningState:provisioningState,repositoryRef:gitRepository.ref,repositoryUrl:gitRepository.url}' \
+            -o json
+
+          az k8s-configuration flux kustomization show \
+            --resource-group "$RG" \
+            --cluster-name "$CLUSTER" \
+            --cluster-type "$CLUSTER_TYPE" \
+            --name "$FLUX_NAME" \
+            --kustomization-name "$KUSTOMIZATION" \
+            --query '{name:name,path:path,prune:prune,provisioningState:provisioningState}' \
+            -o json
+
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.7
+
+      - name: Verify read-only AKS access
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster }}
+        run: |
+          set -euo pipefail
+          az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl auth can-i get pods --namespace cicd-dev | grep -qx yes
+          kubectl get namespace cicd-dev -o name
+
+      - name: Publish activation preflight summary
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster }}
+          ACR_NAME: ${{ steps.acr.outputs.name }}
+          LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Azure DEV activation preflight'
+            echo '- GitHub OIDC login: PASS'
+            echo "- Resource group: \`$RG\`"
+            echo "- AKS: \`$CLUSTER\`"
+            echo "- ACR: \`$ACR_NAME\` (\`$LOGIN_SERVER\`)"
+            echo '- ACR read access: PASS'
+            echo '- Flux configuration: PASS'
+            echo '- AKS namespace-scoped read access: PASS'
+            echo '- Azure mutations performed: NONE'
+          } >> "$GITHUB_STEP_SUMMARY"
