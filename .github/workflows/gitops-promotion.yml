@@ -107,7 +107,7 @@ jobs:
           - Release profile: \`${PROFILE}\`
           - Source request: \`${REQUEST}\`
 
-          This PR changes Git desired state only. CI does not connect to AKS and does not run kubectl apply or Helm deployment commands.
+          This PR changes Git desired state only. The build/promotion job has no direct Kubernetes deployment path.
           EOF
 
           gh pr create \
