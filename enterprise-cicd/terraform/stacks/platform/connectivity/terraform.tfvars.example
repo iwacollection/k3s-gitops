@@ -1,0 +1,61 @@
+resource_group_name  = "rg-platform-connectivity"
+location             = "eastus"
+virtual_network_name = "vnet-platform-eastus"
+address_space        = ["10.20.0.0/16"]
+
+network_security_groups = {
+  workload = {
+    name = "nsg-workload"
+    rules = {}
+  }
+  data = {
+    name = "nsg-data"
+    rules = {}
+  }
+}
+
+route_tables = {
+  workload = {
+    name   = "rt-workload"
+    routes = {}
+  }
+}
+
+nat_gateway = {
+  name           = "nat-platform-eastus"
+  public_ip_name = "pip-nat-platform-eastus"
+}
+
+subnets = {
+  aks = {
+    address_prefixes = ["10.20.0.0/22"]
+    nsg_key          = "workload"
+    route_table_key  = "workload"
+    use_nat_gateway  = true
+  }
+  private-endpoints = {
+    address_prefixes = ["10.20.8.0/24"]
+    nsg_key          = "data"
+  }
+  postgres = {
+    address_prefixes = ["10.20.9.0/24"]
+    nsg_key          = "data"
+    delegation = {
+      name         = "postgres-flexible"
+      service_name = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions      = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
+}
+
+private_dns_zone_names = [
+  "privatelink.vaultcore.azure.net",
+  "privatelink.servicebus.windows.net",
+  "privatelink.redis.azure.net",
+  "private.postgres.database.azure.com"
+]
+
+tags = {
+  managed_by = "terraform"
+  platform   = "enterprise-cicd"
+}

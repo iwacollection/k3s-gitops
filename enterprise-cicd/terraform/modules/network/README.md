@@ -1,3 +1,3 @@
-# network module
+# Network Module
 
-Reusable Terraform module boundary for Azure workload/platform networking. Shared network ownership stays with the platform boundary.
+Governed VNet/subnet module. Supports subnet delegation plus optional NSG, route-table and NAT Gateway associations. Platform stacks own this module; application teams do not call it directly.
