@@ -1,0 +1,10 @@
+{
+  "apiVersion": "platform.ci/v1",
+  "kind": "Application",
+  "metadata": {"name": "payment-api", "owner": "payment-team"},
+  "spec": {
+    "buildProfile": "java/springboot-maven-v1",
+    "artifact": {"type": "container", "repository": "payment-api"},
+    "deployment": {"type": "kubernetes", "releaseProfile": "rolling-v1"}
+  }
+}
