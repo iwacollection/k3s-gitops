@@ -2,10 +2,7 @@
 set -euo pipefail
 
 # One-time Azure bootstrap for GitHub Actions -> ACR -> existing AKS.
-# Designed for the current lab:
-#   AKS: group-test/k8s-test-cicd
-#   GitHub: iwacollection/k3s-gitops
-# It creates only CI/CD identity + Standard ACR and RBAC assignments.
+# Creates only CI/CD identity + Standard ACR and RBAC assignments.
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-group-test}"
 LOCATION="${LOCATION:-eastus}"
@@ -31,6 +28,10 @@ if [[ -z "${ACR_NAME:-}" ]]; then
   HASH="$(printf '%s' "${SUBSCRIPTION_ID}-${GITHUB_OWNER}-${GITHUB_REPO}" | sha256sum | awk '{print $1}' | cut -c1-12)"
   ACR_NAME="cicd${HASH}"
 fi
+
+section() {
+  printf '\n%s\n' "$1"
+}
 
 ensure_role() {
   local role="$1"
@@ -81,15 +82,12 @@ echo "aks=$AKS_CLUSTER"
 echo "acr=$ACR_NAME"
 echo "namespace=$NAMESPACE"
 
-echo
-echo() { printf '\n%s\n' "$*"; }
-
-echo "[1] Ensure resource group exists"
+section "[1] Ensure resource group exists"
 if ! az group show --name "$RESOURCE_GROUP" --only-show-errors >/dev/null 2>&1; then
   az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --only-show-errors >/dev/null
 fi
 
-echo "[2] Ensure Standard ACR"
+section "[2] Ensure Standard ACR"
 if ! az acr show --name "$ACR_NAME" --only-show-errors >/dev/null 2>&1; then
   az acr create \
     --resource-group "$RESOURCE_GROUP" \
@@ -102,7 +100,7 @@ fi
 ACR_ID="$(az acr show --name "$ACR_NAME" --query id -o tsv)"
 ACR_LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
 
-echo "[3] Ensure GitHub CI managed identity"
+section "[3] Ensure GitHub CI managed identity"
 if ! az identity show --resource-group "$RESOURCE_GROUP" --name "$IDENTITY_NAME" --only-show-errors >/dev/null 2>&1; then
   az identity create \
     --resource-group "$RESOURCE_GROUP" \
@@ -114,7 +112,7 @@ IDENTITY_ID="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$IDEN
 CLIENT_ID="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$IDENTITY_NAME" --query clientId -o tsv)"
 PRINCIPAL_ID="$(az identity show --resource-group "$RESOURCE_GROUP" --name "$IDENTITY_NAME" --query principalId -o tsv)"
 
-echo "[4] Configure GitHub OIDC trust"
+section "[4] Configure GitHub OIDC trust"
 put_fic \
   "github-feature-branch" \
   "repo:${GITHUB_OWNER}/${GITHUB_REPO}:ref:refs/heads/${FEATURE_BRANCH}" \
@@ -124,10 +122,10 @@ put_fic \
   "repo:${GITHUB_OWNER}/${GITHUB_REPO}:ref:refs/heads/main" \
   "$IDENTITY_ID"
 
-echo "[5] Grant GitHub CI AcrPush"
+section "[5] Grant GitHub CI AcrPush"
 ensure_role "AcrPush" "$ACR_ID" "$PRINCIPAL_ID"
 
-echo "[6] Resolve AKS and create deployment namespace"
+section "[6] Resolve AKS and create deployment namespace"
 AKS_ID="$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER" --query id -o tsv)"
 AKS_CONFIG="${AKS_CONFIG:-$HOME/.kube/aks-${AKS_CLUSTER}.yaml}"
 mkdir -p "$(dirname "$AKS_CONFIG")"
@@ -144,11 +142,11 @@ KUBECTL_BIN="${KUBECTL_BIN:-$(command -v kubectl-aks || command -v kubectl)}"
 KUBECONFIG="$AKS_CONFIG" "$KUBECTL_BIN" create namespace "$NAMESPACE" --dry-run=client -o yaml \
   | KUBECONFIG="$AKS_CONFIG" "$KUBECTL_BIN" apply -f - >/dev/null
 
-echo "[7] Grant CI access to AKS"
+section "[7] Grant CI access to AKS"
 ensure_role "Azure Kubernetes Service Cluster User Role" "$AKS_ID" "$PRINCIPAL_ID"
 ensure_role "Azure Kubernetes Service RBAC Writer" "$AKS_ID/namespaces/$NAMESPACE" "$PRINCIPAL_ID"
 
-echo "[8] Grant AKS kubelet identity AcrPull"
+section "[8] Grant AKS kubelet identity AcrPull"
 KUBELET_OBJECT_ID="$(az rest \
   --method get \
   --url "https://management.azure.com${AKS_ID}?api-version=2026-04-01" \
@@ -160,7 +158,7 @@ else
   echo "WARNING: kubelet identity objectId not returned; image pull role must be verified separately."
 fi
 
-echo "[9] Write local bootstrap outputs"
+section "[9] Write local bootstrap outputs"
 OUTPUT_FILE="${OUTPUT_FILE:-github_oidc_bootstrap.env}"
 cat > "$OUTPUT_FILE" <<EOF
 AZURE_CLIENT_ID=$CLIENT_ID
@@ -174,13 +172,11 @@ K8S_NAMESPACE=$NAMESPACE
 EOF
 chmod 600 "$OUTPUT_FILE"
 
-echo
-echo "========================================="
+section "========================================="
 echo " BOOTSTRAP SUCCESS"
 echo "========================================="
 echo "output=$OUTPUT_FILE"
 echo "acr=$ACR_LOGIN_SERVER"
 echo "identity_client_id=$CLIENT_ID"
 echo "namespace=$NAMESPACE"
-echo
-echo "Next: run the GitHub workflow 'azure-aks-smoke-deploy' from this branch and paste the values from $OUTPUT_FILE into workflow_dispatch inputs."
+section "Next: run GitHub workflow 'azure-aks-smoke-deploy' from this branch and paste values from $OUTPUT_FILE into workflow_dispatch inputs."
