@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/azure-dev-activation-preflight.yml'
+      - 'enterprise-cicd/contracts/environment-bindings.json'
       - 'enterprise-cicd/gitops/clusters/aks-automatic-lab/cluster.json'
       - 'enterprise-cicd/activation/**'
   workflow_dispatch:
@@ -33,12 +34,31 @@ jobs:
           set -euo pipefail
           python enterprise-cicd/activation/validate_readiness.py --output /tmp/platform-readiness.json
 
+      - name: Resolve platform-owned DEV OIDC identity
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          CLIENT_ID="$(jq -r '.environments.dev.identities.githubOidc.clientId // empty' "$BINDING")"
+          TENANT_ID="$(jq -r '.environments.dev.identities.githubOidc.tenantId // empty' "$BINDING")"
+          SUBSCRIPTION_ID="$(jq -r '.environments.dev.identities.githubOidc.subscriptionId // empty' "$BINDING")"
+          PRINCIPAL_ID="$(jq -r '.environments.dev.identities.githubOidc.principalId // empty' "$BINDING")"
+          IDENTITY_RESOURCE_ID="$(jq -r '.environments.dev.identities.githubOidc.resourceId // empty' "$BINDING")"
+          test -n "$CLIENT_ID" && test -n "$TENANT_ID" && test -n "$SUBSCRIPTION_ID"
+          test -n "$PRINCIPAL_ID" && test -n "$IDENTITY_RESOURCE_ID"
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
+          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
+          echo "identity_resource_id=$IDENTITY_RESOURCE_ID" >> "$GITHUB_OUTPUT"
+
       - name: Azure login with GitHub OIDC
         uses: azure/login@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
 
       - name: Resolve governed DEV target
         id: target
@@ -178,11 +198,13 @@ jobs:
           CLUSTER: ${{ steps.target.outputs.cluster }}
           ACR_NAME: ${{ steps.acr.outputs.name }}
           LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          PRINCIPAL_ID: ${{ steps.auth.outputs.principal_id }}
         run: |
           set -euo pipefail
           {
             echo '## Azure DEV activation preflight'
             echo '- GitHub OIDC login: PASS'
+            echo "- OIDC principal: \`$PRINCIPAL_ID\`"
             echo "- Resource group: \`$RG\`"
             echo "- AKS: \`$CLUSTER\`"
             echo "- ACR: \`$ACR_NAME\` (\`$LOGIN_SERVER\`)"
