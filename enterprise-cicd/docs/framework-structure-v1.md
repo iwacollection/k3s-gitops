@@ -13,6 +13,21 @@ enterprise-cicd/
 │   ├── dev/
 │   ├── test/
 │   └── prod/
+├── ci-catalog/                   # platform-owned build service catalog
+│   ├── java/springboot-maven-v1/
+│   ├── python/python-uv-v1/
+│   ├── go/go-service-v1/
+│   └── cpp/cmake-conan-v1/
+├── application-definitions/      # app team selects approved CI/release profiles
+├── release-catalog/              # platform-owned CD strategy catalog
+│   ├── rolling/rolling-v1/
+│   ├── canary/canary-v1/
+│   └── blue-green/blue-green-v1/
+├── release-requests/             # immutable digest promotion requests
+├── promotion/
+│   ├── policies/                 # DEV -> TEST -> PROD eligibility rules
+│   ├── verification/             # post-deploy health/metric gates
+│   └── rollback/                 # previous approved digest/slot rules
 ├── terraform/
 │   ├── bootstrap/                # creates only IaC prerequisites
 │   ├── state/                    # backend/state-key rendering
@@ -102,4 +117,10 @@ enterprise-cicd/
 
 ## Control-plane rule
 
-The directory structure is intentionally split by responsibility. Normal application-team infrastructure changes are request-driven: developers edit `iac-requests`, while Platform/SRE owns the Terraform modules, root stacks, schemas, defaults, policy, state and identities. Application CI, Azure infrastructure delivery and Kubernetes GitOps CD remain separate control paths. Production implementation starts only after the management framework, state boundaries, identity boundaries, validation and protected environment model are stable.
+The directory structure is intentionally split by responsibility. Normal application-team infrastructure changes are request-driven: developers edit `iac-requests`, while Platform/SRE owns the Terraform modules, root stacks, schemas, defaults, policy, state and identities.
+
+Normal CI is also profile-driven: application teams select an approved build profile in an application definition; Platform/SRE owns build images, dependency/cache policy, security controls, artifact metadata and reusable workflow implementation.
+
+Normal CD is promotion-driven: a tested immutable artifact digest is promoted through DEV -> TEST -> PROD by a release request. The release catalog owns deployment strategy, verification and rollback behavior; Flux is the target AKS reconciliation control plane.
+
+Production implementation starts only after the management framework, state boundaries, identity boundaries, validation and protected environment model are stable.
