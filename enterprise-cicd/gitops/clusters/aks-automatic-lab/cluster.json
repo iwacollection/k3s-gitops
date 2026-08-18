@@ -1,0 +1,36 @@
+{
+  "apiVersion": "platform.gitops/v1",
+  "kind": "ClusterBinding",
+  "metadata": {
+    "name": "aks-automatic-lab",
+    "environment": "dev"
+  },
+  "spec": {
+    "azure": {
+      "resourceGroup": "group-test",
+      "clusterName": "k8s-test-cicd",
+      "clusterType": "managedClusters"
+    },
+    "flux": {
+      "extension": "microsoft.flux",
+      "configurationName": "enterprise-cicd",
+      "namespace": "flux-system",
+      "scope": "cluster",
+      "repository": "https://github.com/iwacollection/k3s-gitops",
+      "branch": "main",
+      "kustomizations": [
+        {
+          "name": "infra",
+          "path": "./enterprise-cicd/gitops/infrastructure",
+          "prune": true
+        },
+        {
+          "name": "apps-dev",
+          "path": "./enterprise-cicd/gitops/environments/dev",
+          "prune": true,
+          "dependsOn": ["infra"]
+        }
+      ]
+    }
+  }
+}
