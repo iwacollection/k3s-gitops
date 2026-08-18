@@ -1,0 +1,76 @@
+name: Reusable CD Post Deploy v1
+
+on:
+  workflow_call:
+    inputs:
+      cluster_binding:
+        required: true
+        type: string
+      application:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      artifact_repository:
+        required: true
+        type: string
+      artifact_digest:
+        required: true
+        type: string
+      deployment_name:
+        required: false
+        type: string
+        default: ''
+      service_name:
+        required: false
+        type: string
+        default: ''
+      metrics_artifact_name:
+        required: false
+        type: string
+        default: ''
+      metrics_file:
+        required: false
+        type: string
+        default: metrics.json
+    outputs:
+      verification_status:
+        value: ${{ jobs.verify.outputs.verification_status }}
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  observe:
+    uses: ./.github/workflows/reusable-aks-observation-v1.yml
+    with:
+      cluster_binding: ${{ inputs.cluster_binding }}
+      application: ${{ inputs.application }}
+      environment: ${{ inputs.environment }}
+      artifact_repository: ${{ inputs.artifact_repository }}
+      artifact_digest: ${{ inputs.artifact_digest }}
+      deployment_name: ${{ inputs.deployment_name }}
+      service_name: ${{ inputs.service_name }}
+      metrics_artifact_name: ${{ inputs.metrics_artifact_name }}
+      metrics_file: ${{ inputs.metrics_file }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  verify:
+    needs: observe
+    uses: ./.github/workflows/reusable-release-verification-v1.yml
+    with:
+      observation_artifact_name: ${{ needs.observe.outputs.observation_artifact_name }}
+      observation_file: deployment-observation.json
