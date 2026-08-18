@@ -65,6 +65,21 @@ jobs:
           echo "digest=$(jq -r .spec.artifactDigest "$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "profile=$(jq -r .spec.releaseProfile "$REQUEST")" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve protected desired-state branch
+        id: target
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ steps.render.outputs.environment }}
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            dev)  BASE_BRANCH="gitops/dev" ;;
+            test) BASE_BRANCH="gitops/test" ;;
+            prod) BASE_BRANCH="gitops/prod" ;;
+            *) echo "Unsupported environment: $ENVIRONMENT" >&2; exit 1 ;;
+          esac
+          echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+
       - name: Render Kustomize and enforce immutable image
         shell: bash
         env:
@@ -88,6 +103,7 @@ jobs:
           DIGEST: ${{ steps.render.outputs.digest }}
           PROFILE: ${{ steps.render.outputs.profile }}
           REQUEST: ${{ inputs.release_request }}
+          BASE_BRANCH: ${{ steps.target.outputs.base_branch }}
         run: |
           set -euo pipefail
 
@@ -109,6 +125,7 @@ jobs:
 
           - Application: \`${APP}\`
           - Target environment: \`${ENVIRONMENT}\`
+          - Desired-state branch: \`${BASE_BRANCH}\`
           - Artifact digest: \`${DIGEST}\`
           - Release profile: \`${PROFILE}\`
           - Source request: \`${REQUEST}\`
@@ -117,7 +134,7 @@ jobs:
           EOF
 
           gh pr create \
-            --base main \
+            --base "$BASE_BRANCH" \
             --head "$branch" \
             --title "chore(gitops): promote ${APP} to ${ENVIRONMENT}" \
             --body-file /tmp/gitops-pr.md
