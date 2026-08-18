@@ -55,7 +55,7 @@ jobs:
           test -f "$REQUEST"
           test -f "$DEV_CLUSTER_BINDING"
           test "$(jq -r .metadata.environment "$DEV_CLUSTER_BINDING")" = dev
-          test "$(jq -r .spec.flux.branch "$DEV_CLUSTER_BINDING")" = main
+          test "$(jq -r .spec.flux.branch "$DEV_CLUSTER_BINDING")" = gitops/dev
           test "$(jq -r .spec.to "$REQUEST")" = dev
           DIGEST="$(jq -r .spec.artifactDigest "$REQUEST")"
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
