@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ACR Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sku", "adminEnabled", "publicNetworkAccess"],
+  "properties": {
+    "sku": {"enum": ["Standard", "Premium"]},
+    "adminEnabled": {"const": false},
+    "publicNetworkAccess": {"enum": ["Enabled", "Disabled"]},
+    "retentionDays": {"type": "integer", "minimum": 7, "maximum": 365}
+  }
+}
