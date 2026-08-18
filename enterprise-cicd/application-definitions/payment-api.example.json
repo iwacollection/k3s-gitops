@@ -5,6 +5,6 @@
   "spec": {
     "buildProfile": "java/springboot-maven-v1",
     "artifact": {"type": "container", "repository": "payment-api"},
-    "deployment": {"type": "kubernetes", "releaseProfile": "rolling-v1"}
+    "deployment": {"type": "kubernetes", "releaseProfile": "rolling/rolling-v1"}
   }
 }
