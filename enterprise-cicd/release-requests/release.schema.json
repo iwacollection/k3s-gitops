@@ -17,8 +17,9 @@
     },
     "spec": {
       "type": "object",
-      "required": ["artifactDigest", "from", "to", "releaseProfile"],
+      "required": ["artifactRepository", "artifactDigest", "from", "to", "releaseProfile", "changeReason"],
       "properties": {
+        "artifactRepository": {"type": "string", "pattern": "^[a-zA-Z0-9.-]+/[a-zA-Z0-9._/-]+$"},
         "artifactDigest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
         "from": {"enum": ["build", "dev", "test"]},
         "to": {"enum": ["dev", "test", "prod"]},
