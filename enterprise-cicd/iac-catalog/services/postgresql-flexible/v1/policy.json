@@ -1,0 +1,5 @@
+{
+  "dev": {"enabled": true, "allowedSku": ["B_Standard_B2s", "GP_Standard_D2s_v3"], "allowedVersions": ["16", "17", "18"], "requirePublicNetworkDisabled": true, "minBackupRetentionDays": 7, "requiresApproval": false},
+  "test": {"enabled": true, "allowedSku": ["GP_Standard_D2s_v3", "GP_Standard_D4s_v3"], "allowedVersions": ["16", "17", "18"], "requirePublicNetworkDisabled": true, "minBackupRetentionDays": 14, "requireHighAvailability": true, "requiresApproval": false},
+  "prod": {"enabled": false, "reason": "PROD remains blocked until the platform Entra DBA administrator binding is configured per environment", "requiresApproval": true}
+}

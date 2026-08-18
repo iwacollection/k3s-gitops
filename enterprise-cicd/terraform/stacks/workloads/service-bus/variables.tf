@@ -4,6 +4,10 @@ variable "service_bus_name" { type = string }
 variable "sku" { type = string }
 variable "capacity" { type = number }
 variable "public_network_access_enabled" { type = bool }
+variable "network_resource_group_name" { type = string }
+variable "virtual_network_name" { type = string }
+variable "private_endpoint_subnet_name" { type = string }
+variable "private_dns_zone_name" { type = string }
 variable "tags" {
   type    = map(string)
   default = {}

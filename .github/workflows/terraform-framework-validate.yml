@@ -6,14 +6,15 @@ on:
       - 'enterprise-cicd/terraform/**'
       - 'enterprise-cicd/iac-catalog/**'
       - 'enterprise-cicd/iac-requests/**'
+      - 'enterprise-cicd/contracts/environment-bindings.json'
       - '.github/workflows/terraform-framework-validate.yml'
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'enterprise-cicd/terraform/**'
       - 'enterprise-cicd/iac-catalog/**'
       - 'enterprise-cicd/iac-requests/**'
+      - 'enterprise-cicd/contracts/environment-bindings.json'
 
 permissions:
   contents: read
@@ -21,7 +22,7 @@ permissions:
 jobs:
   validate-framework:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,10 +44,13 @@ jobs:
             enterprise-cicd/terraform/stacks/platform/acr
             enterprise-cicd/terraform/stacks/platform/connectivity
             enterprise-cicd/terraform/stacks/platform/aks
+            enterprise-cicd/terraform/stacks/platform/observability
             enterprise-cicd/terraform/stacks/workloads/storage
             enterprise-cicd/terraform/stacks/workloads/key-vault
             enterprise-cicd/terraform/stacks/workloads/managed-identity
             enterprise-cicd/terraform/stacks/workloads/service-bus
+            enterprise-cicd/terraform/stacks/workloads/managed-redis
+            enterprise-cicd/terraform/stacks/workloads/postgresql-flexible
           )
           for stack in "${stacks[@]}"; do
             echo "==> $stack"
@@ -59,30 +63,57 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/iac-rendered
-          python enterprise-cicd/iac-catalog/render_request.py --request enterprise-cicd/iac-requests/dev/payment-acr.example.json --name-prefix plat --output /tmp/iac-rendered/acr.json
-          for service in storage key-vault managed-identity service-bus; do
-            python enterprise-cicd/iac-catalog/render_request.py --request "enterprise-cicd/iac-catalog/services/$service/v1/request.example.json" --output "/tmp/iac-rendered/$service.json"
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request enterprise-cicd/iac-requests/dev/payment-acr.example.json \
+            --name-prefix plat \
+            --output /tmp/iac-rendered/acr.json
+
+          for service in storage key-vault managed-identity service-bus managed-redis postgresql-flexible; do
+            python enterprise-cicd/iac-catalog/render_request.py \
+              --request "enterprise-cicd/iac-catalog/services/$service/v1/request.example.json" \
+              --output "/tmp/iac-rendered/$service.json"
           done
 
-      - name: Verify preview services reject PROD until private networking exists
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/iac-rendered')
+          acr = json.load(open(root/'acr.json'))
+          kv = json.load(open(root/'key-vault.json'))
+          bus = json.load(open(root/'service-bus.json'))
+          redis = json.load(open(root/'managed-redis.json'))
+          pg = json.load(open(root/'postgresql-flexible.json'))
+          assert acr['sku'] == 'Standard'
+          assert kv['public_network_access_enabled'] is False and kv['private_dns_zone_name'] == 'privatelink.vaultcore.azure.net'
+          assert bus['public_network_access_enabled'] is False and bus['private_dns_zone_name'] == 'privatelink.servicebus.windows.net'
+          assert redis['public_network_access'] == 'Disabled' and redis['private_dns_zone_name'] == 'privatelink.redis.azure.net'
+          assert pg['private_dns_zone_name'].endswith('.postgres.database.azure.com')
+          assert pg['delegated_subnet_name'] == 'snet-postgresql'
+          print('Seven IaC catalog renderers are valid.')
+          PY
+
+      - name: Verify PostgreSQL PROD remains blocked until Entra DBA binding exists
         shell: bash
         run: |
           set -euo pipefail
-          for service in key-vault service-bus; do
-            python - "$service" <<'PY'
-          import json, sys
+          python - <<'PY'
+          import json
           from pathlib import Path
-          service = sys.argv[1]
-          src = Path(f'enterprise-cicd/iac-catalog/services/{service}/v1/request.example.json')
+          src = Path('enterprise-cicd/iac-catalog/services/postgresql-flexible/v1/request.example.json')
           data = json.loads(src.read_text())
           data['spec']['environment'] = 'prod'
-          Path(f'/tmp/{service}-prod.json').write_text(json.dumps(data))
+          data['spec']['parameters'].update({
+              'sku': 'GP_Standard_D4s_v3',
+              'backupRetentionDays': 35,
+              'geoRedundantBackup': True,
+              'highAvailabilityMode': 'ZoneRedundant',
+          })
+          Path('/tmp/postgresql-prod.json').write_text(json.dumps(data))
           PY
-            if python enterprise-cicd/iac-catalog/render_request.py --request "/tmp/$service-prod.json" --output "/tmp/$service-prod.tfvars.json"; then
-              echo "$service PROD request should have been blocked." >&2
-              exit 1
-            fi
-          done
+          if python enterprise-cicd/iac-catalog/render_request.py --request /tmp/postgresql-prod.json --output /tmp/postgresql-prod.tfvars.json; then
+            echo 'PostgreSQL PROD request should remain blocked until Entra DBA binding is configured.' >&2
+            exit 1
+          fi
 
       - name: Assert no apply is executed by validation workflow
         shell: bash

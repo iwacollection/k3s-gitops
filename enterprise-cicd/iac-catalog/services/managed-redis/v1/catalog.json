@@ -1,0 +1,11 @@
+{
+  "service": "managed-redis",
+  "version": "v1",
+  "owner": "platform-sre",
+  "terraformModule": "enterprise-cicd/terraform/modules/managed-redis",
+  "rootStack": "enterprise-cicd/terraform/stacks/workloads/managed-redis",
+  "requestSchema": "request.schema.json",
+  "defaults": "defaults.json",
+  "policy": "policy.json",
+  "lifecycle": "active"
+}

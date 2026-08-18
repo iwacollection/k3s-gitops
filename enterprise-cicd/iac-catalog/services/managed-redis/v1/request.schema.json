@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sku": {"type": "string", "enum": ["Balanced_B0", "Balanced_B1", "Balanced_B3", "Balanced_B5", "Balanced_B10"]},
+    "highAvailability": {"type": "boolean"},
+    "publicNetworkAccess": {"type": "string", "enum": ["Disabled"]},
+    "clusteringPolicy": {"type": "string", "enum": ["OSSCluster", "NoCluster"]},
+    "evictionPolicy": {"type": "string", "enum": ["VolatileLRU", "AllKeysLRU", "AllKeysLFU", "NoEviction"]},
+    "rdbBackupFrequency": {"type": "string", "enum": ["Disabled", "1h", "6h", "12h"]}
+  },
+  "required": ["sku", "highAvailability", "publicNetworkAccess", "clusteringPolicy", "evictionPolicy", "rdbBackupFrequency"]
+}

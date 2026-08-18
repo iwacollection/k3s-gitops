@@ -1,3 +1,6 @@
 {
-  "apiVersion":"platform.iac/v1","kind":"InfrastructureRequest","metadata":{"name":"payment-kv","owner":"payment-team","application":"payment"},"spec":{"environment":"dev","region":"eastus","service":"key-vault","templateVersion":"v1","parameters":{"sku":"Standard","purgeProtection":true,"softDeleteRetentionDays":90,"publicNetworkAccess":"Enabled"}}
+  "apiVersion": "platform.iac/v1",
+  "kind": "InfrastructureRequest",
+  "metadata": {"name": "payment-kv", "owner": "payment-team", "application": "payment"},
+  "spec": {"environment": "dev", "region": "eastus", "service": "key-vault", "templateVersion": "v1", "parameters": {"sku": "Standard", "purgeProtection": true}}
 }

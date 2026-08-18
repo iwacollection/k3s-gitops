@@ -1,0 +1,8 @@
+{
+  "sku": "Balanced_B1",
+  "highAvailability": true,
+  "publicNetworkAccess": "Disabled",
+  "clusteringPolicy": "OSSCluster",
+  "evictionPolicy": "VolatileLRU",
+  "rdbBackupFrequency": "Disabled"
+}

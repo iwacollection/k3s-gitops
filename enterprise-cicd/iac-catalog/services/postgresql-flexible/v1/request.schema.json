@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "string", "enum": ["16", "17", "18"]},
+    "sku": {"type": "string", "enum": ["B_Standard_B2s", "GP_Standard_D2s_v3", "GP_Standard_D4s_v3", "MO_Standard_E4s_v3"]},
+    "storageMb": {"type": "integer", "enum": [32768, 65536, 131072, 262144, 524288]},
+    "storageTier": {"type": "string", "enum": ["P4", "P6", "P10", "P15", "P20"]},
+    "backupRetentionDays": {"type": "integer", "minimum": 7, "maximum": 35},
+    "geoRedundantBackup": {"type": "boolean"},
+    "autoGrow": {"type": "boolean"},
+    "highAvailabilityMode": {"type": "string", "enum": ["Disabled", "SameZone", "ZoneRedundant"]},
+    "publicNetworkAccess": {"type": "string", "enum": ["Disabled"]}
+  },
+  "required": ["version", "sku", "storageMb", "storageTier", "backupRetentionDays", "geoRedundantBackup", "autoGrow", "highAvailabilityMode", "publicNetworkAccess"]
+}
