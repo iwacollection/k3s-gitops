@@ -5,9 +5,8 @@ COPY go.mod ./
 COPY main.go ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /out/app ./main.go
 
-FROM gcr.io/distroless/static-debian12:nonroot
-WORKDIR /
+FROM scratch
 COPY --from=build /out/app /app
-USER nonroot:nonroot
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/app"]
