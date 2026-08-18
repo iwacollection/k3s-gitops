@@ -130,6 +130,28 @@ def main() -> int:
         ):
             require_text(errors, matrix, required, f"matrix orchestration missing required control: {required}")
 
+    consumption_policy = load(ROOT / "github-actions" / "policies" / "reusable-workflow-consumption.json")
+    policy = consumption_policy["spec"]
+    if policy.get("platformOwnsDAG") is not True:
+        fail(errors, "platform must own the reusable workflow DAG")
+    if policy.get("callerOwnsBusinessTriggers") is not True:
+        fail(errors, "application caller should own business trigger selection")
+    if policy.get("mainBranchAllowedForProduction") is not False:
+        fail(errors, "production reusable workflow calls must not follow main")
+    if policy.get("environmentMatrixAllowed") is not False:
+        fail(errors, "DEV/TEST/PROD promotion must not be modeled as a matrix")
+    if policy.get("directProductionDeploymentFromCI") is not False:
+        fail(errors, "CI must not directly deploy production")
+
+    caller_example = (ROOT / "github-actions" / "policies" / "application-caller.example.yml").read_text(encoding="utf-8")
+    require_text(errors, caller_example, "reusable-application-ci-v1.yml@PLATFORM_RELEASE_REF", "caller example must pin an explicit platform release ref")
+    if "reusable-application-ci-v1.yml@main" in caller_example:
+        fail(errors, "production caller example must not follow @main")
+
+    stale_copy = ROOT / "github-actions" / "reusable" / "application-ci.yml"
+    if stale_copy.exists():
+        fail(errors, "stale duplicate reusable workflow copy must not exist outside .github/workflows")
+
     if errors:
         print("BUILD PLATFORM VALIDATION: FAILED")
         for error in errors:
@@ -141,6 +163,7 @@ def main() -> int:
     print(f"validated profiles: {len(profiles)}")
     print("lifecycle: prepare -> verify -> package")
     print("orchestration: matrix outside; needs DAG inside reusable workflow")
+    print("consumption: thin callers; platform workflow pinned by immutable release ref")
     print("security: source + container controls required before signing")
     print("cache: lock/profile scoped; shared writable workspace forbidden")
     return 0
