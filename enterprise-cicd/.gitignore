@@ -1,0 +1,16 @@
+# Terraform local working data
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/crash.log
+**/crash.*.log
+
+# Local variable/backend files may contain Azure account identifiers
+**/*.tfvars
+!**/*.tfvars.example
+**/*.auto.tfvars
+**/backend.hcl
+
+# Local execution output
+**/*.log
