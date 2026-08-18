@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - 'enterprise-cicd/terraform/**'
+      - 'enterprise-cicd/iac-catalog/**'
+      - 'enterprise-cicd/iac-requests/**'
       - '.github/workflows/terraform-framework-validate.yml'
   push:
     branches:
       - main
     paths:
       - 'enterprise-cicd/terraform/**'
+      - 'enterprise-cicd/iac-catalog/**'
+      - 'enterprise-cicd/iac-requests/**'
 
 permissions:
   contents: read
@@ -35,6 +39,30 @@ jobs:
 
       - name: Validate platform identity stack
         run: terraform -chdir=enterprise-cicd/terraform/stacks/platform/identity validate
+
+      - name: Initialize platform ACR stack without backend
+        run: terraform -chdir=enterprise-cicd/terraform/stacks/platform/acr init -backend=false -input=false
+
+      - name: Validate platform ACR stack
+        run: terraform -chdir=enterprise-cicd/terraform/stacks/platform/acr validate
+
+      - name: Render developer ACR request
+        run: |
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request enterprise-cicd/iac-requests/dev/payment-acr.example.json \
+            --name-prefix plat \
+            --output /tmp/payment-acr.auto.tfvars.json
+
+          python - <<'PY'
+          import json
+          data = json.load(open('/tmp/payment-acr.auto.tfvars.json'))
+          assert data['sku'] == 'Standard'
+          assert data['public_network_access_enabled'] is True
+          assert data['resource_group_name'] == 'rg-payment-dev'
+          assert data['tags']['managed_by'] == 'iac-catalog'
+          assert data['acr_name'].startswith('platpaymentdev')
+          print('ACR request rendering is valid.')
+          PY
 
       - name: Assert no apply is executed by validation workflow
         shell: bash
