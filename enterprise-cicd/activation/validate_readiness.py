@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 DEV_CLUSTER_BINDING = ROOT / "gitops" / "clusters" / "aks-automatic-lab" / "cluster.json"
+DEV_DESIRED_STATE_BRANCH = "gitops/dev"
 
 EXPECTED_ENVIRONMENTS = {"dev", "test", "prod"}
 EXPECTED_DIAGNOSTIC_SERVICES = {
@@ -103,8 +104,8 @@ def check_dev_cluster_binding(report: dict) -> None:
     flux = binding.get("spec", {}).get("flux", {})
     if not azure.get("resourceGroup") or not azure.get("clusterName"):
         raise SystemExit("DEV ClusterBinding must contain Azure resourceGroup and clusterName")
-    if flux.get("branch") != "main":
-        raise SystemExit("DEV Flux binding must reconcile the protected main branch")
+    if flux.get("branch") != DEV_DESIRED_STATE_BRANCH:
+        raise SystemExit(f"DEV Flux binding must reconcile the protected {DEV_DESIRED_STATE_BRANCH} branch")
     dev_kustomizations = [
         item for item in flux.get("kustomizations", [])
         if str(item.get("path", "")).endswith("/environments/dev")
@@ -143,6 +144,8 @@ def check_flux_only_write_plane(report: dict) -> None:
         raise SystemExit("DEV activation must use the platform-owned LAB ClusterBinding")
     if "*.example.json" not in activation_text or "*.example.json" not in promotion_text:
         raise SystemExit("Real promotion workflows must explicitly reject example Release Requests")
+    if 'BASE_BRANCH="gitops/dev"' not in promotion_text:
+        raise SystemExit("DEV promotion must target the protected gitops/dev desired-state branch")
     report["kubernetesWritePlane"] = "flux-only"
     report["exampleReleasePromotion"] = "forbidden"
 
