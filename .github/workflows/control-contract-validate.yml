@@ -1,0 +1,51 @@
+name: Control Contract Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/contracts/**'
+      - 'enterprise-cicd/terraform/state/**'
+      - '.github/workflows/control-contract-validate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'enterprise-cicd/contracts/**'
+      - 'enterprise-cicd/terraform/state/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate control contracts
+        run: python enterprise-cicd/contracts/validate_contracts.py
+
+      - name: Verify no Terraform state is tracked
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(terraform\.tfstate|[^/]+\.tfstate(\..*)?)$'; then
+            echo 'Terraform state file is tracked by Git.' >&2
+            exit 1
+          fi
+
+      - name: Verify no committed backend runtime file
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)backend\.hcl$'; then
+            echo 'Runtime backend.hcl must not be committed.' >&2
+            exit 1
+          fi
