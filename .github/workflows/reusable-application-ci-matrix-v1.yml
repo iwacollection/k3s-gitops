@@ -1,0 +1,104 @@
+name: Reusable Application CI Matrix v1
+
+on:
+  workflow_call:
+    inputs:
+      applications_json:
+        description: JSON array of Application definition paths.
+        required: true
+        type: string
+      acr_name:
+        description: Azure Container Registry name.
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      MAVEN_PROXY_URL:
+        required: false
+      PYPI_INDEX_URL:
+        required: false
+      GO_PROXY_URL:
+        required: false
+      CONAN_REMOTE_URL:
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  define-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      applications: ${{ steps.matrix.outputs.applications }}
+    steps:
+      - name: Validate application matrix
+        id: matrix
+        shell: bash
+        env:
+          APPLICATIONS_JSON: ${{ inputs.applications_json }}
+        run: |
+          set -euo pipefail
+          compact=$(jq -ce '
+            if type != "array" or length == 0 then
+              error("applications_json must be a non-empty JSON array")
+            else
+              map(
+                if type != "string" or
+                   (startswith("enterprise-cicd/application-definitions/") | not) or
+                   (endswith(".json") | not)
+                then error("invalid Application definition path")
+                else . end
+              )
+            end
+          ' <<< "$APPLICATIONS_JSON")
+          echo "applications=$compact" >> "$GITHUB_OUTPUT"
+
+  application-ci:
+    name: CI ${{ matrix.application_definition }}
+    needs: define-matrix
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        application_definition: ${{ fromJSON(needs.define-matrix.outputs.applications) }}
+    uses: ./.github/workflows/reusable-application-ci-v1.yml
+    with:
+      application_definition: ${{ matrix.application_definition }}
+      acr_name: ${{ inputs.acr_name }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      MAVEN_PROXY_URL: ${{ secrets.MAVEN_PROXY_URL }}
+      PYPI_INDEX_URL: ${{ secrets.PYPI_INDEX_URL }}
+      GO_PROXY_URL: ${{ secrets.GO_PROXY_URL }}
+      CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+
+  ci-gate:
+    runs-on: ubuntu-latest
+    needs: [define-matrix, application-ci]
+    if: ${{ always() }}
+    steps:
+      - name: Require all matrix builds to succeed
+        shell: bash
+        env:
+          MATRIX_RESULT: ${{ needs.application-ci.result }}
+          DEFINE_RESULT: ${{ needs.define-matrix.result }}
+        run: |
+          set -euo pipefail
+          echo "define-matrix=$DEFINE_RESULT"
+          echo "application-ci=$MATRIX_RESULT"
+          [[ "$DEFINE_RESULT" == "success" ]]
+          [[ "$MATRIX_RESULT" == "success" ]]
+
+      - name: Explain matrix evidence handling
+        run: |
+          echo 'Each matrix invocation uploads application-scoped release evidence.'
+          echo 'Do not aggregate artifact digests from matrix reusable-workflow outputs; consume the named evidence artifacts instead.'
