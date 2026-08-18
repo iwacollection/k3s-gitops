@@ -57,7 +57,9 @@ def main() -> None:
     spec = profile["spec"]
 
     cache_hash = digest_inputs(profile_name, spec["buildImage"], spec.get("cacheKeyInputs", []), workspace)
-    cache_dir = workspace / ".platform-cache" / safe_name(profile_name)
+    configured_cache_root = os.getenv("PLATFORM_CACHE_ROOT", "").strip()
+    cache_root = Path(configured_cache_root).resolve() if configured_cache_root else workspace / ".platform-cache"
+    cache_dir = cache_root / safe_name(profile_name)
     cache_dir.mkdir(parents=True, exist_ok=True)
     args.config_dir.mkdir(parents=True, exist_ok=True)
 
