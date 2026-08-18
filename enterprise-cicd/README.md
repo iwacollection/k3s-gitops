@@ -107,6 +107,13 @@ enterprise-cicd/
 └── azure-dev-smoke-deploy.yml
 ```
 
+## Execution order
+
+1. Run `enterprise-cicd/scripts/bootstrap-github-azure-dev.sh` once from an authenticated Azure CLI session.
+2. Create the GitHub `dev` Environment and store the three emitted Azure identity values as Environment Secrets.
+3. Run the `Azure Dev Smoke Deploy` workflow manually.
+4. Verify the `go-smoke` Helm release in namespace `cicd-dev`.
+
 ## Next platform layers
 
 - Managed DevOps Pools with curated Azure Compute Gallery images
