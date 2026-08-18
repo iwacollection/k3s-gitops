@@ -1,8 +1,8 @@
 locals {
-  environment             = lookup(var.tags, "environment", "dev")
-  bindings                = jsondecode(file("${path.root}/../../../../contracts/environment-bindings.json"))
-  postgresql_dba_binding  = local.bindings.environments[local.environment].identities.postgresqlDba
-  prod_dba_binding_ready  = local.environment != "prod" || (try(local.postgresql_dba_binding.objectId, null) != null && try(local.postgresql_dba_binding.principalName, null) != null)
+  environment            = lookup(var.tags, "environment", "dev")
+  bindings               = jsondecode(file("${path.root}/../../../../contracts/environment-bindings.json"))
+  postgresql_dba_binding = local.bindings.environments[local.environment].identities.postgresqlDba
+  prod_dba_binding_ready = local.environment != "prod" || (try(local.postgresql_dba_binding.objectId, null) != null && try(local.postgresql_dba_binding.principalName, null) != null)
 }
 
 resource "terraform_data" "governance" {
