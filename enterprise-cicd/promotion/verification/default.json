@@ -1,9 +1,24 @@
 {
   "apiVersion": "platform.promotion/v1",
   "kind": "VerificationPolicy",
+  "metadata": {"name": "default", "version": "v1"},
   "spec": {
-    "required": ["rollout-ready", "health-endpoint", "error-rate", "latency"],
-    "onFailure": "rollback",
-    "evidenceRequired": true
+    "onFailure": "rollback-pr",
+    "evidenceRequired": true,
+    "rebuildForbidden": true,
+    "environments": {
+      "dev": {
+        "required": ["flux-ready", "rollout-ready", "health-endpoint"],
+        "thresholds": {"errorRatePercent": null, "p95LatencyMs": null}
+      },
+      "test": {
+        "required": ["flux-ready", "rollout-ready", "health-endpoint", "error-rate", "latency"],
+        "thresholds": {"errorRatePercent": 2.0, "p95LatencyMs": 750}
+      },
+      "prod": {
+        "required": ["flux-ready", "rollout-ready", "health-endpoint", "error-rate", "latency"],
+        "thresholds": {"errorRatePercent": 1.0, "p95LatencyMs": 500}
+      }
+    }
   }
 }
