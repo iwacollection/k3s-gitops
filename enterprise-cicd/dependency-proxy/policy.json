@@ -1,0 +1,32 @@
+{
+  "apiVersion": "platform.ci/v1",
+  "kind": "DependencyPolicy",
+  "spec": {
+    "maven": {
+      "proxyEnvironment": "MAVEN_PROXY_URL",
+      "cache": "/platform-cache/m2",
+      "lockInputs": ["pom.xml"]
+    },
+    "pypi": {
+      "proxyEnvironment": "PYPI_INDEX_URL",
+      "cache": "/platform-cache/uv",
+      "lockInputs": ["uv.lock", "pyproject.toml"]
+    },
+    "go": {
+      "proxyEnvironment": "GO_PROXY_URL",
+      "cache": ["/platform-cache/go/mod", "/platform-cache/go/build"],
+      "lockInputs": ["go.sum", "go.mod"]
+    },
+    "cpp": {
+      "proxyEnvironment": "CONAN_REMOTE_URL",
+      "cache": ["/platform-cache/conan", "/platform-cache/ccache"],
+      "lockInputs": ["conan.lock", "conanfile.py", "conanfile.txt"]
+    }
+  },
+  "rules": {
+    "sharedWritableWorkspaceAllowed": false,
+    "cacheSharedByLockHashOnly": true,
+    "cacheIsOptimizationNotSourceOfTruth": true,
+    "dependencyProxyCredentialsInRepositoryAllowed": false
+  }
+}

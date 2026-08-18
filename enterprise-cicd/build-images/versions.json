@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "images": {
+    "java21-maven:v1": {
+      "context": "enterprise-cicd/build-images/java",
+      "dockerfile": "Dockerfile",
+      "toolchain": {"jdk": "21", "maven": "3.9.16"}
+    },
+    "python-uv:v1": {
+      "context": "enterprise-cicd/build-images/python",
+      "dockerfile": "Dockerfile",
+      "toolchain": {"python": "3.12.13", "uv": "0.12.0"}
+    },
+    "go-builder:v1": {
+      "context": "enterprise-cicd/build-images/go",
+      "dockerfile": "Dockerfile",
+      "toolchain": {"go": "1.26.5"}
+    },
+    "cpp-cmake-conan:v1": {
+      "context": "enterprise-cicd/build-images/cpp",
+      "dockerfile": "Dockerfile",
+      "toolchain": {"os": "ubuntu-24.04", "conan": "2.24.0", "buildSystem": "cmake+ninja", "compiler": "ubuntu-toolchain"}
+    }
+  },
+  "policy": {
+    "mutableTagAllowed": false,
+    "publishPrefix": "build/",
+    "rebuildOnBaseSecurityUpdate": true,
+    "promotionByDigest": true
+  }
+}

@@ -1,0 +1,64 @@
+name: Build Platform Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/build-images/**'
+      - 'enterprise-cicd/ci-catalog/**'
+      - 'enterprise-cicd/ci-scripts/**'
+      - 'enterprise-cicd/dependency-proxy/**'
+      - 'enterprise-cicd/security/**'
+      - 'enterprise-cicd/github-actions/reusable/**'
+      - '.github/workflows/build-platform-validate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'enterprise-cicd/build-images/**'
+      - 'enterprise-cicd/ci-catalog/**'
+      - 'enterprise-cicd/ci-scripts/**'
+      - 'enterprise-cicd/dependency-proxy/**'
+      - 'enterprise-cicd/security/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-build-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate build image/profile/security contracts
+        run: python enterprise-cicd/testing/contracts/validate_build_platform.py
+
+      - name: Compile Python platform helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            enterprise-cicd/ci-scripts/common/resolve_application.py \
+            enterprise-cicd/ci-scripts/common/prepare_build_env.py \
+            enterprise-cicd/testing/contracts/validate_build_platform.py
+
+      - name: Verify CI workflow never deploys to Kubernetes
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=enterprise-cicd/github-actions/reusable/application-ci.yml
+          if grep -nE 'kubectl|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+get-credentials' "$workflow"; then
+            echo 'Application CI must not contain Kubernetes deployment commands.' >&2
+            exit 1
+          fi
+
+      - name: Verify immutable artifact build contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=enterprise-cicd/github-actions/reusable/application-ci.yml
+          grep -F 'GITHUB_SHA' "$workflow"
+          grep -F -- '--sbom=true' "$workflow"
+          grep -F -- '--provenance=mode=max' "$workflow"
+          grep -F 'cosign sign --yes' "$workflow"

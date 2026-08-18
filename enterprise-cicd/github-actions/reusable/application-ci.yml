@@ -18,6 +18,14 @@ on:
         required: true
       AZURE_SUBSCRIPTION_ID:
         required: true
+      MAVEN_PROXY_URL:
+        required: false
+      PYPI_INDEX_URL:
+        required: false
+      GO_PROXY_URL:
+        required: false
+      CONAN_REMOTE_URL:
+        required: false
 
 permissions:
   contents: read
@@ -26,7 +34,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -48,6 +56,44 @@ jobs:
           echo "artifact_type=$(jq -r .artifactType /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "artifact_repository=$(jq -r .artifactRepository /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "dockerfile=$(jq -r .dockerfile /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare dependency cache and proxy configuration
+        id: prepare
+        shell: bash
+        env:
+          MAVEN_PROXY_URL: ${{ secrets.MAVEN_PROXY_URL }}
+          PYPI_INDEX_URL: ${{ secrets.PYPI_INDEX_URL }}
+          GO_PROXY_URL: ${{ secrets.GO_PROXY_URL }}
+          CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/ci-scripts/common/prepare_build_env.py \
+            --application '${{ inputs.application_definition }}' \
+            --output /tmp/platform-build.json \
+            --env-file /tmp/platform-build.env \
+            --config-dir /tmp/platform-config
+          echo "cache_key=$(jq -r .cacheKey /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+          echo "cache_dir=$(jq -r .cacheDir /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+          echo "pre_command=$(jq -r .preCommand /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore platform dependency cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.prepare.outputs.cache_dir }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.cache_key }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-platform-ci-
+
+      - name: Source security scan
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
 
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -73,18 +119,27 @@ jobs:
           BUILD_IMAGE: ${{ steps.resolve.outputs.build_image }}
           VERIFY_COMMAND: ${{ steps.resolve.outputs.verify_command }}
           PACKAGE_COMMAND: ${{ steps.resolve.outputs.package_command }}
+          PRE_COMMAND: ${{ steps.prepare.outputs.pre_command }}
+          CACHE_DIR: ${{ steps.prepare.outputs.cache_dir }}
           LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
         run: |
           set -euo pipefail
           IMAGE="$LOGIN_SERVER/build/$BUILD_IMAGE"
           docker pull "$IMAGE"
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env-file /tmp/platform-build.env \
             -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$GITHUB_WORKSPACE/$CACHE_DIR:/platform-cache" \
+            -v "/tmp/platform-config:/platform-config:ro" \
             -w /workspace \
             "$IMAGE" \
-            sh -lc "$VERIFY_COMMAND && $PACKAGE_COMMAND"
+            sh -lc "$PRE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
 
-      - name: Build immutable application image
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build immutable application image with SBOM and provenance
         if: steps.resolve.outputs.artifact_type == 'container'
         shell: bash
         env:
@@ -94,8 +149,14 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="$LOGIN_SERVER/$REPOSITORY:$GITHUB_SHA"
-          docker build --pull -f "$DOCKERFILE" -t "$IMAGE" .
-          docker push "$IMAGE"
+          docker buildx build \
+            --pull \
+            --push \
+            --sbom=true \
+            --provenance=mode=max \
+            -f "$DOCKERFILE" \
+            -t "$IMAGE" \
+            .
 
       - name: Resolve immutable artifact digest
         if: steps.resolve.outputs.artifact_type == 'container'
@@ -111,6 +172,39 @@ jobs:
             --image "$REPOSITORY:$GITHUB_SHA" \
             --query digest -o tsv)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          mkdir -p .platform-release
+
+      - name: Container vulnerability scan
+        if: steps.resolve.outputs.artifact_type == 'container'
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ steps.acr.outputs.login_server }}/${{ steps.resolve.outputs.artifact_repository }}@${{ steps.artifact.outputs.digest }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Generate evidence SBOM
+        if: steps.resolve.outputs.artifact_type == 'container'
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ steps.acr.outputs.login_server }}/${{ steps.resolve.outputs.artifact_repository }}@${{ steps.artifact.outputs.digest }}
+          format: spdx-json
+          output-file: .platform-release/sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Install Cosign
+        if: steps.resolve.outputs.artifact_type == 'container'
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign immutable artifact with GitHub OIDC
+        if: steps.resolve.outputs.artifact_type == 'container'
+        shell: bash
+        env:
+          IMAGE: ${{ steps.acr.outputs.login_server }}/${{ steps.resolve.outputs.artifact_repository }}@${{ steps.artifact.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
 
       - name: Emit release metadata
         if: steps.resolve.outputs.artifact_type == 'container'
@@ -122,21 +216,20 @@ jobs:
           DIGEST: ${{ steps.artifact.outputs.digest }}
         run: |
           set -euo pipefail
-          mkdir -p .platform-release
           jq -n \
             --arg application "$APP" \
             --arg sourceCommit "$GITHUB_SHA" \
             --arg repository "$LOGIN_SERVER/$REPOSITORY" \
             --arg digest "$DIGEST" \
-            '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,sourceCommit:$sourceCommit,artifact:{repository:$repository,digest:$digest}}' \
+            '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,sourceCommit:$sourceCommit,artifact:{repository:$repository,digest:$digest},evidence:{sbom:"sbom.spdx.json",signed:true,provenance:true}}' \
             > .platform-release/artifact.json
           cat .platform-release/artifact.json
 
-      - name: Upload release metadata
+      - name: Upload release evidence
         if: steps.resolve.outputs.artifact_type == 'container'
         uses: actions/upload-artifact@v4
         with:
-          name: release-metadata-${{ github.sha }}
-          path: .platform-release/artifact.json
+          name: release-evidence-${{ github.sha }}
+          path: .platform-release/
           if-no-files-found: error
           retention-days: 30
