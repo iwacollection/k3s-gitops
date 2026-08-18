@@ -9,6 +9,9 @@ on:
       - 'enterprise-cicd/dependency-proxy/**'
       - 'enterprise-cicd/security/**'
       - 'enterprise-cicd/github-actions/reusable/**'
+      - 'enterprise-cicd/testing/contracts/validate_build_platform.py'
+      - '.github/workflows/reusable-application-ci-v1.yml'
+      - '.github/workflows/reusable-application-ci-matrix-v1.yml'
       - '.github/workflows/build-platform-validate.yml'
   push:
     branches:
@@ -19,6 +22,9 @@ on:
       - 'enterprise-cicd/ci-scripts/**'
       - 'enterprise-cicd/dependency-proxy/**'
       - 'enterprise-cicd/security/**'
+      - 'enterprise-cicd/testing/contracts/validate_build_platform.py'
+      - '.github/workflows/reusable-application-ci-v1.yml'
+      - '.github/workflows/reusable-application-ci-matrix-v1.yml'
 
 permissions:
   contents: read
@@ -31,7 +37,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate build image/profile/security contracts
+      - name: Validate build image/profile/security/DAG contracts
         run: python enterprise-cicd/testing/contracts/validate_build_platform.py
 
       - name: Compile Python platform helpers
@@ -43,13 +49,13 @@ jobs:
             enterprise-cicd/ci-scripts/common/prepare_build_env.py \
             enterprise-cicd/testing/contracts/validate_build_platform.py
 
-      - name: Verify CI workflow never deploys to Kubernetes
+      - name: Verify callable CI workflow never deploys to Kubernetes
         shell: bash
         run: |
           set -euo pipefail
-          workflow=enterprise-cicd/github-actions/reusable/application-ci.yml
-          if grep -nE 'kubectl|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+get-credentials' "$workflow"; then
-            echo 'Application CI must not contain Kubernetes deployment commands.' >&2
+          workflow=.github/workflows/reusable-application-ci-v1.yml
+          if grep -nE 'kubectl[[:space:]]+apply|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+get-credentials|terraform[[:space:]]+apply' "$workflow"; then
+            echo 'Application CI must not contain infrastructure or Kubernetes deployment commands.' >&2
             exit 1
           fi
 
@@ -57,8 +63,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workflow=enterprise-cicd/github-actions/reusable/application-ci.yml
+          workflow=.github/workflows/reusable-application-ci-v1.yml
           grep -F 'GITHUB_SHA' "$workflow"
           grep -F -- '--sbom=true' "$workflow"
           grep -F -- '--provenance=mode=max' "$workflow"
           grep -F 'cosign sign --yes' "$workflow"
+
+      - name: Verify DAG and matrix orchestration
+        shell: bash
+        run: |
+          set -euo pipefail
+          dag=.github/workflows/reusable-application-ci-v1.yml
+          matrix=.github/workflows/reusable-application-ci-matrix-v1.yml
+
+          grep -F 'needs: [resolve, source-scan, build-test]' "$dag"
+          grep -F 'needs: [resolve, image-build, image-scan, sbom]' "$dag"
+          grep -F 'needs: [resolve, image-build, image-scan, sbom, sign]' "$dag"
+          grep -F 'strategy:' "$matrix"
+          grep -F 'matrix:' "$matrix"
+          grep -F 'uses: ./.github/workflows/reusable-application-ci-v1.yml' "$matrix"
