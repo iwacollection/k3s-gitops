@@ -1,0 +1,107 @@
+name: Azure Dev Smoke Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_CORE_OUTPUT: none
+  RESOURCE_GROUP: group-test
+  AKS_CLUSTER: k8s-test-cicd
+  K8S_NAMESPACE: cicd-dev
+  IMAGE_NAME: go-smoke
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve ACR
+        id: acr
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACR_NAME="$(az acr list --resource-group "$RESOURCE_GROUP" --query "[?tags.platform=='enterprise-cicd'] | [0].name" -o tsv)"
+          if [ -z "$ACR_NAME" ]; then
+            echo "No enterprise-cicd ACR found in $RESOURCE_GROUP" >&2
+            exit 1
+          fi
+          LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
+          echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: ACR login
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name "${{ steps.acr.outputs.name }}"
+
+      - name: Build and push immutable image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.acr.outputs.login_server }}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build \
+            --file enterprise-cicd/examples/go-smoke/Dockerfile \
+            --tag "$IMAGE" \
+            enterprise-cicd/examples/go-smoke
+          docker push "$IMAGE"
+
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: latest
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.7
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.21.2
+
+      - name: Configure AKS context
+        shell: bash
+        run: |
+          set -euo pipefail
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER" \
+            --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl get namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$K8S_NAMESPACE"
+
+      - name: Helm deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm upgrade --install go-smoke enterprise-cicd/helm/go-smoke \
+            --namespace "$K8S_NAMESPACE" \
+            --set image.repository="${{ steps.acr.outputs.login_server }}/${IMAGE_NAME}" \
+            --set image.tag="$GITHUB_SHA" \
+            --atomic \
+            --wait \
+            --timeout 5m
+
+      - name: Verify rollout
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/go-smoke --timeout=180s
+          kubectl -n "$K8S_NAMESPACE" get deployment,pod,service -o wide
