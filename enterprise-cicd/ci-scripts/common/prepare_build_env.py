@@ -20,13 +20,13 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", value).strip("-")
 
 
-def digest_inputs(profile_name: str, build_image: str, inputs: list[str]) -> str:
+def digest_inputs(profile_name: str, build_image: str, inputs: list[str], workspace: Path) -> str:
     h = hashlib.sha256()
     h.update(profile_name.encode())
     h.update(build_image.encode())
     h.update(platform.machine().encode())
     for item in inputs:
-        path = Path(item)
+        path = workspace / item
         h.update(item.encode())
         if path.is_file():
             h.update(path.read_bytes())
@@ -46,16 +46,18 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--env-file", required=True, type=Path)
     parser.add_argument("--config-dir", required=True, type=Path)
+    parser.add_argument("--workspace", type=Path, default=Path("."))
     args = parser.parse_args()
 
+    workspace = args.workspace.resolve()
     app = load(args.application)
     profile_name = app["spec"]["buildProfile"]
     profile_path = ROOT / "ci-catalog" / profile_name / "profile.json"
     profile = load(profile_path)
     spec = profile["spec"]
 
-    cache_hash = digest_inputs(profile_name, spec["buildImage"], spec.get("cacheKeyInputs", []))
-    cache_dir = Path(".platform-cache") / safe_name(profile_name)
+    cache_hash = digest_inputs(profile_name, spec["buildImage"], spec.get("cacheKeyInputs", []), workspace)
+    cache_dir = workspace / ".platform-cache" / safe_name(profile_name)
     cache_dir.mkdir(parents=True, exist_ok=True)
     args.config_dir.mkdir(parents=True, exist_ok=True)
 

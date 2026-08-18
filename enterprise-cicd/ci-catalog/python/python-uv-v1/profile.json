@@ -5,9 +5,9 @@
   "spec": {
     "buildImage": "python-uv:v1",
     "dependencyProxy": "pypi",
-    "commands": {"verify": "uv run pytest", "package": "uv build"},
+    "commands": {"prepare": "uv sync", "verify": "uv run pytest", "package": "uv build"},
     "outputs": ["wheel", "container"],
     "requiredControls": ["unit-test", "secret-scan", "sca", "sast", "sbom", "container-scan", "sign", "provenance"],
-    "cacheKeyInputs": ["uv.lock", "python-version", "build-image-version", "architecture"]
+    "cacheKeyInputs": ["uv.lock", "pyproject.toml", "python-version", "build-image-version", "architecture"]
   }
 }

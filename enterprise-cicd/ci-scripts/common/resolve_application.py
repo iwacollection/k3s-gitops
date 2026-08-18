@@ -34,6 +34,7 @@ def main() -> None:
 
     profile = load(profile_path)
     build = profile["spec"]
+    commands = build["commands"]
     artifact = spec["artifact"]
 
     resolved = {
@@ -42,8 +43,10 @@ def main() -> None:
         "buildProfile": profile_name,
         "buildImage": build["buildImage"],
         "dependencyProxy": build["dependencyProxy"],
-        "verifyCommand": build["commands"]["verify"],
-        "packageCommand": build["commands"]["package"],
+        "prepareCommand": commands.get("prepare", "true"),
+        "verifyCommand": commands["verify"],
+        "packageCommand": commands["package"],
+        "cacheKeyInputs": build.get("cacheKeyInputs", []),
         "requiredControls": build["requiredControls"],
         "artifactType": artifact["type"],
         "artifactRepository": artifact["repository"],

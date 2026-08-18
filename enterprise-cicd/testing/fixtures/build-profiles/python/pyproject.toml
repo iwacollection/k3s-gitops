@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "platform-python-build-fixture"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/platform_fixture"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

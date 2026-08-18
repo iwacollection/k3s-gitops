@@ -5,7 +5,7 @@
   "spec": {
     "buildImage": "java21-maven:v1",
     "dependencyProxy": "maven",
-    "commands": {"verify": "mvn -B verify", "package": "mvn -B -DskipTests package"},
+    "commands": {"prepare": "true", "verify": "mvn -B verify", "package": "mvn -B -DskipTests package"},
     "outputs": ["jar", "container"],
     "requiredControls": ["unit-test", "secret-scan", "sca", "sast", "sbom", "container-scan", "sign", "provenance"],
     "cacheKeyInputs": ["pom.xml", "java-version", "build-image-version", "architecture"]

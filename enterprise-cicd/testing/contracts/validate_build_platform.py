@@ -49,6 +49,10 @@ def main() -> int:
         image = spec.get("buildImage")
         if image not in images:
             fail(errors, f"profile references unregistered build image: {profile_path}: {image}")
+        commands = spec.get("commands", {})
+        for phase in ("prepare", "verify", "package"):
+            if not commands.get(phase):
+                fail(errors, f"profile must define {phase} command: {profile_path}")
         controls = set(spec.get("requiredControls", []))
         missing = mandatory_controls - controls
         if missing:
@@ -79,6 +83,7 @@ def main() -> int:
     print("BUILD PLATFORM VALIDATION: PASSED")
     print(f"registered images: {len(images)}")
     print(f"validated profiles: {len(profiles)}")
+    print("lifecycle: prepare -> verify -> package")
     print("security: source + container controls required")
     print("cache: lock/profile scoped; shared writable workspace forbidden")
     return 0

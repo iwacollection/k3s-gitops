@@ -51,6 +51,7 @@ jobs:
 
           echo "application=$(jq -r .application /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "build_image=$(jq -r .buildImage /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "prepare_command=$(jq -r .prepareCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "verify_command=$(jq -r .verifyCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "package_command=$(jq -r .packageCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "artifact_type=$(jq -r .artifactType /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
@@ -69,6 +70,7 @@ jobs:
           set -euo pipefail
           python enterprise-cicd/ci-scripts/common/prepare_build_env.py \
             --application '${{ inputs.application_definition }}' \
+            --workspace . \
             --output /tmp/platform-build.json \
             --env-file /tmp/platform-build.env \
             --config-dir /tmp/platform-config
@@ -117,6 +119,7 @@ jobs:
         shell: bash
         env:
           BUILD_IMAGE: ${{ steps.resolve.outputs.build_image }}
+          PREPARE_COMMAND: ${{ steps.resolve.outputs.prepare_command }}
           VERIFY_COMMAND: ${{ steps.resolve.outputs.verify_command }}
           PACKAGE_COMMAND: ${{ steps.resolve.outputs.package_command }}
           PRE_COMMAND: ${{ steps.prepare.outputs.pre_command }}
@@ -130,11 +133,11 @@ jobs:
             --user "$(id -u):$(id -g)" \
             --env-file /tmp/platform-build.env \
             -v "$GITHUB_WORKSPACE:/workspace" \
-            -v "$GITHUB_WORKSPACE/$CACHE_DIR:/platform-cache" \
+            -v "$CACHE_DIR:/platform-cache" \
             -v "/tmp/platform-config:/platform-config:ro" \
             -w /workspace \
             "$IMAGE" \
-            sh -lc "$PRE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
+            sh -lc "$PRE_COMMAND && $PREPARE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
 
       - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
