@@ -12,7 +12,7 @@ fi
 RESOURCE_GROUP="group-test"
 CLUSTER_NAME="k8s-test-cicd"
 CONFIG_NAME="enterprise-cicd"
-CONFIG_NAMESPACE="flux-system"
+CONFIG_NAMESPACE="enterprise-cicd"
 REPO_URL="https://github.com/iwacollection/k3s-gitops"
 BRANCH="gitops/dev"
 
@@ -40,6 +40,7 @@ echo " AKS FLUX BOOTSTRAP"
 echo "========================================="
 echo "resource_group=$RESOURCE_GROUP"
 echo "cluster=$CLUSTER_NAME"
+echo "configuration_namespace=$CONFIG_NAMESPACE"
 echo "repository=$REPO_URL"
 echo "branch=$BRANCH"
 echo
@@ -66,5 +67,5 @@ az k8s-configuration flux show \
   --cluster-name "$CLUSTER_NAME" \
   --cluster-type managedClusters \
   --name "$CONFIG_NAME" \
-  --query '{name:name,provisioningState:provisioningState,repositoryUrl:gitRepository.url,branch:gitRepository.ref.branch}' \
+  --query '{name:name,namespace:namespace,provisioningState:provisioningState,repositoryUrl:gitRepository.url,branch:gitRepository.ref.branch}' \
   -o json
