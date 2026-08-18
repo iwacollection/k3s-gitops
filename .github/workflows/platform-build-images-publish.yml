@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       github_environment:
-        description: Protected GitHub Environment providing Azure OIDC secrets
+        description: Protected GitHub Environment mapped to the platform OIDC binding
         required: true
         default: dev
         type: string
@@ -52,12 +52,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve governed OIDC identity
+        id: auth
+        shell: bash
+        env:
+          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          case "$PLATFORM_ENVIRONMENT" in
+            dev|test|prod) ;;
+            *) echo "Unsupported platform environment: $PLATFORM_ENVIRONMENT" >&2; exit 1 ;;
+          esac
+          CLIENT_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")"
+          TENANT_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")"
+          SUBSCRIPTION_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")"
+          PRINCIPAL_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.principalId // empty' "$BINDING")"
+          test -n "$CLIENT_ID" && test -n "$TENANT_ID" && test -n "$SUBSCRIPTION_ID" && test -n "$PRINCIPAL_ID"
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
+          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
+
       - name: Azure login with OIDC
         uses: azure/login@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
 
       - name: Resolve immutable image contract
         id: image
@@ -126,5 +148,6 @@ jobs:
             echo "- Image: \`$LOGIN_SERVER/$REPOSITORY:$VERSION\`"
             echo "- Digest: \`$DIGEST\`"
             echo "- Source commit: \`$GITHUB_SHA\`"
+            echo "- Azure principal: \`${{ steps.auth.outputs.principal_id }}\`"
             echo '- Mutable overwrite: forbidden'
           } >> "$GITHUB_STEP_SUMMARY"
