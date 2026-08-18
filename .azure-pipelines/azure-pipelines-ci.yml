@@ -1,0 +1,84 @@
+trigger:
+  branches:
+    include:
+      - '*'   # adjust to your branch policy
+
+pr:
+  branches:
+    include:
+      - '*'
+
+variables:
+  - name: azureSubscription
+    value: '<YOUR-AZURE-SERVICE-CONNECTION-NAME>'
+  - name: ACR_NAME
+    value: '<your-acr-name>'
+  - name: IMAGE_NAME
+    value: 'example-service'
+
+stages:
+  - stage: Build
+    displayName: Build and push image
+    jobs:
+      - job: Build
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Checkout@v4
+
+          - task: AzureCLI@2
+            displayName: 'Login to Azure'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Logged in"
+
+          - script: |
+              IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.SourceVersion)
+              echo "##vso[task.setvariable variable=IMAGE]$IMAGE"
+            displayName: 'Set IMAGE variable (preview tag)'
+
+          - task: Docker@2
+            displayName: Build and push image to ACR
+            inputs:
+              command: buildAndPush
+              repository: '$(ACR_NAME)/$(IMAGE_NAME)'
+              dockerfile: 'apps/example-service/Dockerfile'
+              tags: |
+                $(Build.SourceVersion)
+            env:
+              ACR_PASSWORD: $(ACR_PASSWORD)
+
+          - task: AzureCLI@2
+            displayName: Deploy preview to AKS
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -e
+                az aks get-credentials --resource-group rg-k3s-gitops-dev --name k3s-gitops-dev-aks --overwrite-existing
+                PREVIEW_NS=preview-$(System.PullRequest.PullRequestId)
+                kubectl create namespace $PREVIEW_NS || true
+                IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.SourceVersion)
+                kubectl -n $PREVIEW_NS apply -k apps/example-service/k8s/overlays/preview
+                kubectl -n $PREVIEW_NS set image deployment/example-service example-service=$IMAGE
+
+  - stage: Cleanup
+    displayName: Cleanup preview on PR close
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - job: Cleanup
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # This job is a placeholder; to actually run cleanup on PR close you would configure a separate pipeline or use service hooks
+                echo "Cleanup job placeholder"
