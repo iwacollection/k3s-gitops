@@ -31,7 +31,18 @@
   "kubernetes_cd": {
     "target_control_plane": "flux",
     "ci_direct_prod_cluster_admin_allowed": false,
-    "artifact_pull_identity": "aks-kubelet-or-workload-identity"
+    "artifact_pull_identity": "aks-kubelet-or-workload-identity",
+    "verification": {
+      "identity_pattern": "uami-cd-verifier-{environment}",
+      "authentication": "workload-identity-federation",
+      "cluster_admin_allowed": false,
+      "write_allowed": false,
+      "secret_read_allowed": false,
+      "recommended_aks_role": "Azure Kubernetes Service RBAC Reader",
+      "recommended_scope": "namespace",
+      "environments_separate": true,
+      "responsibility": ["observe-flux", "observe-rollout", "observe-health", "read-approved-metrics"]
+    }
   },
   "bootstrap": {
     "human_privileged_identity": "temporary-only",
