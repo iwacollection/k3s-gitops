@@ -8,15 +8,15 @@
     "rebuildForbidden": true,
     "environments": {
       "dev": {
-        "required": ["flux-ready", "rollout-ready", "health-endpoint"],
+        "required": ["flux-ready", "artifact-identity", "rollout-ready", "health-endpoint"],
         "thresholds": {"errorRatePercent": null, "p95LatencyMs": null}
       },
       "test": {
-        "required": ["flux-ready", "rollout-ready", "health-endpoint", "error-rate", "latency"],
+        "required": ["flux-ready", "artifact-identity", "rollout-ready", "health-endpoint", "error-rate", "latency"],
         "thresholds": {"errorRatePercent": 2.0, "p95LatencyMs": 750}
       },
       "prod": {
-        "required": ["flux-ready", "rollout-ready", "health-endpoint", "error-rate", "latency"],
+        "required": ["flux-ready", "artifact-identity", "rollout-ready", "health-endpoint", "error-rate", "latency"],
         "thresholds": {"errorRatePercent": 1.0, "p95LatencyMs": 500}
       }
     }
