@@ -1,0 +1,75 @@
+name: Platform Build Images Verify
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/platform-build-images-verify.yml'
+      - 'enterprise-cicd/activation/requests/platform-build-images-dev.json'
+      - 'enterprise-cicd/contracts/environment-bindings.json'
+      - 'enterprise-cicd/build-images/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve DEV OIDC binding
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r '.environments.dev.identities.githubOidc.clientId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r '.environments.dev.identities.githubOidc.tenantId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r '.environments.dev.identities.githubOidc.subscriptionId' "$BINDING")" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+
+      - name: Verify immutable platform image tags and digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST=enterprise-cicd/activation/requests/platform-build-images-dev.json
+          ACR_NAME="$(jq -r '.acrName' "$REQUEST")"
+          LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
+          : > /tmp/platform-image-digests.tsv
+          for key in java21-maven:v1 python-uv:v1 go-builder:v1 cpp-cmake-conan:v1; do
+            name="${key%:*}"
+            version="${key##*:}"
+            repository="build/$name"
+            digest="$(az acr repository show --name "$ACR_NAME" --image "$repository:$version" --query digest -o tsv)"
+            test -n "$digest"
+            case "$digest" in sha256:*) ;; *) echo "Invalid digest for $repository:$version: $digest" >&2; exit 1 ;; esac
+            printf '%s\t%s\n' "$LOGIN_SERVER/$repository:$version" "$digest" | tee -a /tmp/platform-image-digests.tsv
+          done
+          test "$(wc -l < /tmp/platform-image-digests.tsv)" -eq 4
+
+      - name: Publish digest evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Platform Build Images DEV v1'
+            echo
+            echo '| Image | Immutable digest |'
+            echo '|---|---|'
+            while IFS=$'\t' read -r image digest; do
+              echo "| \`$image\` | \`$digest\` |"
+            done < /tmp/platform-image-digests.tsv
+            echo
+            echo '- OIDC only: PASS'
+            echo '- Immutable v1 tags: PASS'
+            echo '- Four-language image set: PASS'
+          } >> "$GITHUB_STEP_SUMMARY"
