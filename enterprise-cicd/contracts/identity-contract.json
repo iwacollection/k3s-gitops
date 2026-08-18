@@ -38,10 +38,11 @@
       "cluster_admin_allowed": false,
       "write_allowed": false,
       "secret_read_allowed": false,
-      "recommended_aks_role": "Azure Kubernetes Service RBAC Reader",
-      "recommended_scope": "namespace",
+      "azure_control_plane_roles": ["Reader", "Azure Kubernetes Service Cluster User Role"],
+      "kubernetes_data_plane_role": "Azure Kubernetes Service RBAC Reader",
+      "kubernetes_data_plane_scope": "namespace",
       "environments_separate": true,
-      "responsibility": ["observe-flux", "observe-rollout", "observe-health", "read-approved-metrics"]
+      "responsibility": ["observe-flux", "observe-rollout", "verify-artifact-digest", "observe-health", "read-approved-metrics"]
     }
   },
   "bootstrap": {
