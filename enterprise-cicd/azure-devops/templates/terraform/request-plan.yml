@@ -1,0 +1,108 @@
+parameters:
+  - name: requestPath
+    type: string
+  - name: azureServiceConnection
+    type: string
+  - name: tfstateStorageAccount
+    type: string
+  - name: tfstateResourceGroup
+    type: string
+    default: rg-platform-cicd
+  - name: namePrefix
+    type: string
+    default: plat
+  - name: planArtifactName
+    type: string
+    default: terraform-plan
+
+steps:
+  - checkout: self
+    clean: true
+
+  - bash: |
+      set -euo pipefail
+      terraform version
+      python --version
+      az version --output table
+    displayName: Validate IaC toolchain
+
+  - task: AzureCLI@2
+    displayName: Render request and create Terraform plan
+    inputs:
+      azureSubscription: ${{ parameters.azureServiceConnection }}
+      addSpnToEnvironment: true
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        REQUEST='${{ parameters.requestPath }}'
+        WORK="$(Pipeline.Workspace)/iac-plan"
+        mkdir -p "$WORK"
+
+        ENVIRONMENT=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec"]["environment"])' "$REQUEST")
+        SERVICE=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec"]["service"])' "$REQUEST")
+        REQUEST_NAME=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$REQUEST")
+        TEMPLATE_VERSION=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec"]["templateVersion"])' "$REQUEST")
+        ROOT_STACK=$(python -c 'import json,sys,pathlib; r=json.load(open(sys.argv[1])); p=pathlib.Path("enterprise-cicd/iac-catalog/services")/r["spec"]["service"]/r["spec"]["templateVersion"]/("catalog.json"); print(json.load(open(p))["rootStack"])' "$REQUEST")
+
+        python enterprise-cicd/iac-catalog/render_request.py \
+          --request "$REQUEST" \
+          --name-prefix '${{ parameters.namePrefix }}' \
+          --output "$WORK/request.auto.tfvars.json"
+
+        export TFSTATE_STORAGE_ACCOUNT='${{ parameters.tfstateStorageAccount }}'
+        export TFSTATE_RESOURCE_GROUP='${{ parameters.tfstateResourceGroup }}'
+
+        python enterprise-cicd/terraform/state/render_backend.py \
+          --scope catalog \
+          --environment "$ENVIRONMENT" \
+          --service "$SERVICE" \
+          --request "$REQUEST_NAME" \
+          --auth oidc \
+          --output "$WORK/backend.hcl"
+
+        OIDC_REQUEST_URL="${SYSTEM_OIDCREQUESTURI}?api-version=7.1&serviceConnectionId=${AZURESUBSCRIPTION_SERVICE_CONNECTION_ID}"
+        ARM_OIDC_TOKEN=$(curl -fsS \
+          -H 'Content-Length: 0' \
+          -H 'Content-Type: application/json' \
+          -H "Authorization: Bearer ${SYSTEM_ACCESSTOKEN}" \
+          -X POST "$OIDC_REQUEST_URL" | jq -r '.oidcToken')
+
+        export ARM_CLIENT_ID="$servicePrincipalId"
+        export ARM_TENANT_ID="$tenantId"
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+        export ARM_OIDC_TOKEN
+        export ARM_USE_OIDC=true
+        export ARM_USE_AZUREAD=true
+
+        terraform -chdir="$ROOT_STACK" init \
+          -input=false \
+          -backend-config="$WORK/backend.hcl"
+
+        terraform -chdir="$ROOT_STACK" validate
+
+        terraform -chdir="$ROOT_STACK" plan \
+          -input=false \
+          -lock-timeout=5m \
+          -var-file="$WORK/request.auto.tfvars.json" \
+          -out="$WORK/tfplan"
+
+        terraform -chdir="$ROOT_STACK" show -no-color "$WORK/tfplan" > "$WORK/plan.txt"
+
+        cp "$REQUEST" "$WORK/request.json"
+        printf '%s\n' "$ROOT_STACK" > "$WORK/root-stack.txt"
+        printf '%s\n' "$ENVIRONMENT" > "$WORK/environment.txt"
+        printf '%s\n' "$SERVICE" > "$WORK/service.txt"
+        printf '%s\n' "$REQUEST_NAME" > "$WORK/request-name.txt"
+
+        echo "##vso[task.setvariable variable=IAC_PLAN_WORK]$WORK"
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish reviewed Terraform plan
+    inputs:
+      targetPath: $(IAC_PLAN_WORK)
+      artifact: ${{ parameters.planArtifactName }}
+      publishLocation: pipeline
