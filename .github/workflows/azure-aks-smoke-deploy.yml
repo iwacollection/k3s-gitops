@@ -1,0 +1,163 @@
+name: azure-aks-smoke-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      azure_client_id:
+        description: User-assigned managed identity client ID
+        required: true
+        type: string
+      azure_tenant_id:
+        description: Azure tenant ID
+        required: true
+        type: string
+      azure_subscription_id:
+        description: Azure subscription ID
+        required: true
+        type: string
+      azure_acr_name:
+        description: Azure Container Registry name (without azurecr.io)
+        required: true
+        type: string
+      resource_group:
+        description: AKS resource group
+        required: true
+        default: group-test
+        type: string
+      aks_cluster:
+        description: Existing AKS cluster
+        required: true
+        default: k8s-test-cicd
+        type: string
+      namespace:
+        description: Deployment namespace
+        required: true
+        default: cicd-dev
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-aks-smoke-${{ inputs.namespace }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: enterprise-cicd-smoke
+  HELM_RELEASE: enterprise-cicd-smoke
+  CHART_PATH: enterprise-cicd/helm/smoke-service
+  BUILD_CONTEXT: enterprise-cicd/examples/go-service
+
+jobs:
+  build-push-deploy:
+    name: Build, push and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ inputs.azure_client_id }}
+          tenant-id: ${{ inputs.azure_tenant_id }}
+          subscription-id: ${{ inputs.azure_subscription_id }}
+
+      - name: Validate Azure target
+        shell: bash
+        run: |
+          set -euo pipefail
+          az account show --query '{subscription:name,id:id,tenant:tenantId}' -o table
+          az acr show --name '${{ inputs.azure_acr_name }}' --query '{name:name,loginServer:loginServer,sku:sku.name}' -o table
+          az aks show --resource-group '${{ inputs.resource_group }}' --name '${{ inputs.aks_cluster }}' --query '{name:name,state:provisioningState,version:kubernetesVersion}' -o table
+
+      - name: Login to ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name '${{ inputs.azure_acr_name }}'
+
+      - name: Build and push immutable image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOGIN_SERVER="${{ inputs.azure_acr_name }}.azurecr.io"
+          IMAGE_TAG="${GITHUB_SHA}"
+          IMAGE="${LOGIN_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"
+
+          docker build \
+            --pull \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --tag "$IMAGE" \
+            "$BUILD_CONTEXT"
+
+          docker push "$IMAGE"
+
+          DIGEST="$(az acr repository show \
+            --name '${{ inputs.azure_acr_name }}' \
+            --image "${IMAGE_NAME}:${IMAGE_TAG}" \
+            --query digest \
+            -o tsv)"
+
+          echo "repository=${LOGIN_SERVER}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Built ${IMAGE}@${DIGEST}"
+
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - name: Set AKS context as non-admin
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ inputs.resource_group }}
+          cluster-name: ${{ inputs.aks_cluster }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Verify namespace access
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl auth can-i get pods --namespace '${{ inputs.namespace }}'
+          kubectl auth can-i create deployments.apps --namespace '${{ inputs.namespace }}'
+
+      - name: Helm lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm lint "$CHART_PATH"
+
+      - name: Deploy exact image to AKS
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm upgrade --install "$HELM_RELEASE" "$CHART_PATH" \
+            --namespace '${{ inputs.namespace }}' \
+            --atomic \
+            --wait \
+            --timeout 5m \
+            --set-string image.repository='${{ steps.image.outputs.repository }}' \
+            --set-string image.tag='${{ steps.image.outputs.tag }}'
+
+      - name: Verify rollout
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/$HELM_RELEASE \
+            --namespace '${{ inputs.namespace }}' \
+            --timeout=180s
+
+          kubectl get deployment,pod,service \
+            --namespace '${{ inputs.namespace }}' \
+            -l app.kubernetes.io/instance=$HELM_RELEASE \
+            -o wide
+
+          echo "image_digest=${{ steps.image.outputs.digest }}"
