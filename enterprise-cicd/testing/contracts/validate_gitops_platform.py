@@ -33,6 +33,14 @@ def main() -> None:
     require("artifactDigest" in required_release_fields, "release request must include artifactDigest")
     require("changeReason" in required_release_fields, "release request must include changeReason")
 
+    rolling = load(ROOT / "release-catalog" / "rolling" / "rolling-v1" / "profile.json")
+    canary = load(ROOT / "release-catalog" / "canary" / "canary-v1" / "profile.json")
+    blue_green = load(ROOT / "release-catalog" / "blue-green" / "blue-green-v1" / "profile.json")
+    require(rolling["spec"]["execution"]["ready"] is True, "rolling executor must remain available")
+    require(rolling["spec"]["execution"]["engine"] == "kubernetes-deployment", "unexpected rolling executor")
+    require(canary["spec"]["execution"]["ready"] is False, "canary must stay blocked until a progressive delivery controller exists")
+    require(blue_green["spec"]["execution"]["ready"] is False, "blue-green must stay blocked until a traffic-switch controller exists")
+
     cluster = load(ROOT / "gitops" / "clusters" / "aks-automatic-lab" / "cluster.json")
     require(cluster["spec"]["azure"]["clusterName"] == "k8s-test-cicd", "lab cluster binding changed unexpectedly")
     require(cluster["spec"]["azure"]["clusterType"] == "managedClusters", "AKS must use managedClusters type")
