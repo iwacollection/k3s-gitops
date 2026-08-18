@@ -46,6 +46,7 @@ def main() -> None:
     require(cluster["spec"]["azure"]["clusterType"] == "managedClusters", "AKS must use managedClusters type")
     flux = cluster["spec"]["flux"]
     require(flux["extension"] == "microsoft.flux", "AKS GitOps must use microsoft.flux")
+    require(flux["branch"] == "gitops/dev", "DEV Flux must reconcile the dedicated gitops/dev desired-state branch")
     kustomizations = {item["name"]: item for item in flux["kustomizations"]}
     require(kustomizations["infra"]["prune"] is True, "infra pruning must be enabled")
     require(kustomizations["apps-dev"]["dependsOn"] == ["infra"], "apps-dev must depend on infra")
@@ -68,11 +69,15 @@ def main() -> None:
         require(token not in promotion_workflow, f"GitOps promotion workflow contains direct deployment command: {token}")
     require("gh pr create" in promotion_workflow, "promotion workflow must create a GitOps PR")
     require("kubectl kustomize" in promotion_workflow, "promotion workflow must validate rendered desired state")
+    require('dev)  BASE_BRANCH="gitops/dev"' in promotion_workflow, "DEV promotion must target gitops/dev")
+    require('test) BASE_BRANCH="gitops/test"' in promotion_workflow, "TEST promotion must target gitops/test")
+    require('prod) BASE_BRANCH="gitops/prod"' in promotion_workflow, "PROD promotion must target gitops/prod")
 
     bootstrap = (ROOT / "gitops" / "clusters" / "aks-automatic-lab" / "bootstrap-flux-aks.sh").read_text(encoding="utf-8")
     require("--apply" in bootstrap, "Flux bootstrap must require explicit apply mode")
     require("PLAN ONLY" in bootstrap, "Flux bootstrap must default to plan-only mode")
-    require("APPLY-FLUX" in bootstrap, "Flux bootstrap must require an interactive confirmation")
+    require('BRANCH="gitops/dev"' in bootstrap, "Flux bootstrap must target gitops/dev")
+    require('APPLY=0' in bootstrap and 'APPLY=1' in bootstrap, "Flux bootstrap must gate mutation behind explicit apply mode")
 
     print("GitOps platform contracts validated.")
 
