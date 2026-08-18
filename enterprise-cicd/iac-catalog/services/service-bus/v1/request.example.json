@@ -1,0 +1,3 @@
+{
+  "apiVersion":"platform.iac/v1","kind":"InfrastructureRequest","metadata":{"name":"payment-bus","owner":"payment-team","application":"payment"},"spec":{"environment":"dev","region":"eastus","service":"service-bus","templateVersion":"v1","parameters":{"sku":"Standard","capacity":1,"localAuth":false,"publicNetworkAccess":"Enabled"}}
+}

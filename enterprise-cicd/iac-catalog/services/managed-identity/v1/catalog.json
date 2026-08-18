@@ -1,0 +1,11 @@
+{
+  "service": "managed-identity",
+  "version": "v1",
+  "owner": "platform-sre",
+  "terraformModule": "enterprise-cicd/terraform/modules/managed-identity",
+  "rootStack": "enterprise-cicd/terraform/stacks/workloads/managed-identity",
+  "requestSchema": "request.schema.json",
+  "defaults": "defaults.json",
+  "policy": "policy.json",
+  "lifecycle": "active"
+}

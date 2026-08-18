@@ -1,0 +1,8 @@
+{
+  "replication": "LRS",
+  "accessTier": "Hot",
+  "publicNetworkAccess": "Enabled",
+  "sharedKeyAccess": false,
+  "blobVersioning": true,
+  "deleteRetentionDays": 30
+}

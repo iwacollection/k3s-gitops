@@ -16,6 +16,38 @@ def require(condition: bool, message: str) -> None:
         raise SystemExit(message)
 
 
+iac_catalogs = {}
+for path in (ROOT / "iac-catalog" / "services").glob("*/v*/catalog.json"):
+    service = path.parents[1].name
+    version = path.parent.name
+    key = f"{service}/{version}"
+    catalog = load(path)
+    iac_catalogs[key] = catalog
+    service_dir = path.parent
+    require(catalog.get("service") == service, f"{key}: catalog service mismatch")
+    require(catalog.get("version") == version, f"{key}: catalog version mismatch")
+    require(catalog.get("lifecycle") in {"active", "preview"}, f"{key}: unsupported lifecycle")
+    for field in ("requestSchema", "defaults", "policy"):
+        require((service_dir / catalog[field]).is_file(), f"{key}: missing {field}")
+    require((ROOT.parent / catalog["terraformModule"]).is_dir(), f"{key}: Terraform module does not exist")
+    require((ROOT.parent / catalog["rootStack"]).is_dir(), f"{key}: root stack does not exist")
+
+required_iac = {"acr/v1", "storage/v1", "key-vault/v1", "managed-identity/v1", "service-bus/v1"}
+require(required_iac <= set(iac_catalogs), f"missing required IaC catalog products: {sorted(required_iac - set(iac_catalogs))}")
+
+storage_policy = load(ROOT / "iac-catalog" / "services" / "storage" / "v1" / "policy.json")
+require(storage_policy["prod"].get("requirePublicNetworkDisabled") is True, "storage PROD must require private-only public network setting")
+require(storage_policy["prod"].get("requireSharedKeyDisabled") is True, "storage PROD must disable Shared Key")
+require(storage_policy["prod"].get("requireBlobVersioning") is True, "storage PROD must require versioning")
+
+for preview_service in ("key-vault", "service-bus"):
+    catalog = iac_catalogs[f"{preview_service}/v1"]
+    policy = load(ROOT / "iac-catalog" / "services" / preview_service / "v1" / "policy.json")
+    require(catalog["lifecycle"] == "preview", f"{preview_service}: must remain preview until private networking is governed")
+    require(policy["prod"].get("enabled") is False, f"{preview_service}: PROD must be blocked until private networking is governed")
+
+require(iac_catalogs["managed-identity/v1"]["lifecycle"] == "active", "managed identity v1 should be active")
+
 ci_profiles = {
     path.relative_to(ROOT / "ci-catalog").parent.as_posix(): load(path)
     for path in (ROOT / "ci-catalog").glob("*/*/profile.json")
@@ -42,7 +74,6 @@ require(
     <= set(release_profiles),
     "missing required release profiles",
 )
-
 for name, profile in release_profiles.items():
     require(profile.get("kind") == "ReleaseProfile", f"{name}: invalid ReleaseProfile kind")
     require("rollback" in profile["spec"], f"{name}: rollback policy is required")
@@ -65,4 +96,5 @@ rollback = load(ROOT / "promotion" / "rollback" / "default.json")
 require(rollback["spec"].get("rebuildForbidden") is True, "rollback must not rebuild artifacts")
 require(rollback["spec"].get("postRollbackVerificationRequired") is True, "post-rollback verification is required")
 
-print("Platform CI/CD catalogs are valid.")
+print("Platform IaC/CI/CD catalogs are valid.")
+print(f"IaC products: {', '.join(sorted(iac_catalogs))}")

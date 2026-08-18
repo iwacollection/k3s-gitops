@@ -1,0 +1,11 @@
+{
+  "service": "key-vault",
+  "version": "v1",
+  "owner": "platform-sre",
+  "terraformModule": "enterprise-cicd/terraform/modules/key-vault",
+  "rootStack": "enterprise-cicd/terraform/stacks/workloads/key-vault",
+  "requestSchema": "request.schema.json",
+  "defaults": "defaults.json",
+  "policy": "policy.json",
+  "lifecycle": "preview"
+}

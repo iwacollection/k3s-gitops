@@ -1,0 +1,5 @@
+{
+  "dev": {"enabled": true, "allowedSku": ["Standard"], "requirePurgeProtection": true, "requiresApproval": false},
+  "test": {"enabled": true, "allowedSku": ["Standard", "Premium"], "requirePurgeProtection": true, "requiresApproval": false},
+  "prod": {"enabled": false, "reason": "v1 blocks PROD until Private Endpoint and Private DNS are wired into the governed root stack", "requiresApproval": true}
+}

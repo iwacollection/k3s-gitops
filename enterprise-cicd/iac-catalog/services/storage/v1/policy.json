@@ -1,0 +1,5 @@
+{
+  "dev": {"enabled": true, "allowedReplication": ["LRS", "ZRS"], "requiresApproval": false},
+  "test": {"enabled": true, "allowedReplication": ["LRS", "ZRS", "GRS"], "requiresApproval": false},
+  "prod": {"enabled": true, "allowedReplication": ["ZRS", "GZRS"], "requirePublicNetworkDisabled": true, "requireSharedKeyDisabled": true, "requireBlobVersioning": true, "minDeleteRetentionDays": 30, "requiresApproval": true}
+}

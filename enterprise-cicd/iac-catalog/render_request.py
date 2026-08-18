@@ -28,16 +28,23 @@ def validate_scalar(name: str, value: Any, rule: dict[str, Any]) -> None:
     expected = rule.get("type")
     if expected == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
         fail(f"{name}: integer required")
+    if expected == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+        fail(f"{name}: number required")
     if expected == "string" and not isinstance(value, str):
         fail(f"{name}: string required")
     if expected == "boolean" and not isinstance(value, bool):
         fail(f"{name}: boolean required")
 
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in rule and value < rule["minimum"]:
             fail(f"{name}: minimum is {rule['minimum']}")
         if "maximum" in rule and value > rule["maximum"]:
             fail(f"{name}: maximum is {rule['maximum']}")
+    if isinstance(value, str):
+        if "minLength" in rule and len(value) < rule["minLength"]:
+            fail(f"{name}: minimum length is {rule['minLength']}")
+        if "pattern" in rule and not re.fullmatch(rule["pattern"], value):
+            fail(f"{name}: value does not match required pattern")
 
 
 def validate_request_envelope(request: dict[str, Any]) -> None:
@@ -80,42 +87,144 @@ def apply_policy(environment: str, parameters: dict[str, Any], policy: dict[str,
     env_policy = policy.get(environment)
     if not env_policy:
         fail(f"no policy exists for environment {environment}")
+    if env_policy.get("enabled") is False:
+        fail(f"{environment}: service is disabled: {env_policy.get('reason', 'platform policy')}")
 
     if "allowedSku" in env_policy and parameters.get("sku") not in env_policy["allowedSku"]:
         fail(f"{environment}: sku {parameters.get('sku')!r} is not allowed")
+    if "allowedReplication" in env_policy and parameters.get("replication") not in env_policy["allowedReplication"]:
+        fail(f"{environment}: replication {parameters.get('replication')!r} is not allowed")
     if env_policy.get("requirePublicNetworkDisabled") and parameters.get("publicNetworkAccess") != "Disabled":
         fail(f"{environment}: public network access must be Disabled")
+    if env_policy.get("requireSharedKeyDisabled") and parameters.get("sharedKeyAccess") is not False:
+        fail(f"{environment}: Shared Key access must be disabled")
+    if env_policy.get("requireBlobVersioning") and parameters.get("blobVersioning") is not True:
+        fail(f"{environment}: blob versioning must be enabled")
+    if "minDeleteRetentionDays" in env_policy and parameters.get("deleteRetentionDays", 0) < env_policy["minDeleteRetentionDays"]:
+        fail(f"{environment}: delete retention must be at least {env_policy['minDeleteRetentionDays']} days")
+    if env_policy.get("requirePurgeProtection") and parameters.get("purgeProtection") is not True:
+        fail(f"{environment}: purge protection must be enabled")
+    if env_policy.get("requireLocalAuthDisabled") and parameters.get("localAuth") is not False:
+        fail(f"{environment}: local authentication must be disabled")
 
 
-def acr_tfvars(request: dict[str, Any], parameters: dict[str, Any], name_prefix: str) -> dict[str, Any]:
+def compact(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def slug(value: str) -> str:
+    result = re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
+    return re.sub(r"-+", "-", result)
+
+
+def suffix(request: dict[str, Any]) -> str:
     metadata = request["metadata"]
-    spec = request["spec"]
-    app = re.sub(r"[^a-z0-9]", "", metadata["application"].lower())
-    env = spec["environment"]
-    digest = hashlib.sha256(f"{metadata['name']}:{app}:{env}".encode()).hexdigest()[:6]
-    acr_name = f"{name_prefix}{app}{env}{digest}".lower()[:50]
-    if len(acr_name) < 5:
-        fail("generated ACR name is too short")
+    env = request["spec"]["environment"]
+    return hashlib.sha256(f"{metadata['name']}:{metadata['application']}:{env}".encode()).hexdigest()[:6]
 
-    tags = {
+
+def tags(request: dict[str, Any]) -> dict[str, str]:
+    metadata = request["metadata"]
+    result = {
         "application": metadata["application"],
-        "environment": env,
+        "environment": request["spec"]["environment"],
         "owner": metadata["owner"],
         "managed_by": "iac-catalog",
         "iac_request": metadata["name"],
     }
     if metadata.get("costCenter"):
-        tags["cost_center"] = metadata["costCenter"]
+        result["cost_center"] = metadata["costCenter"]
+    return result
 
+
+def common(request: dict[str, Any]) -> dict[str, Any]:
+    app = slug(request["metadata"]["application"])
+    env = request["spec"]["environment"]
     return {
-        "resource_group_name": f"rg-{metadata['application']}-{env}",
-        "location": spec["region"],
-        "acr_name": acr_name,
+        "resource_group_name": f"rg-{app}-{env}",
+        "location": request["spec"]["region"],
+        "tags": tags(request),
+    }
+
+
+def acr_tfvars(request: dict[str, Any], parameters: dict[str, Any], name_prefix: str) -> dict[str, Any]:
+    result = common(request)
+    app = compact(request["metadata"]["application"])
+    env = request["spec"]["environment"]
+    name = f"{compact(name_prefix)}{app}{env}{suffix(request)}"[:50]
+    if len(name) < 5:
+        fail("generated ACR name is too short")
+    result.update({
+        "acr_name": name,
         "sku": parameters["sku"],
         "public_network_access_enabled": parameters["publicNetworkAccess"] == "Enabled",
         "retention_days": parameters.get("retentionDays", 30),
-        "tags": tags,
-    }
+    })
+    return result
+
+
+def storage_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    result = common(request)
+    app = compact(request["metadata"]["application"])
+    env = request["spec"]["environment"]
+    name = f"st{app}{env}{suffix(request)}"[:24]
+    if len(name) < 3:
+        fail("generated Storage Account name is too short")
+    result.update({
+        "storage_account_name": name,
+        "replication_type": parameters["replication"],
+        "access_tier": parameters["accessTier"],
+        "public_network_access_enabled": parameters["publicNetworkAccess"] == "Enabled",
+        "blob_versioning_enabled": parameters["blobVersioning"],
+        "delete_retention_days": parameters["deleteRetentionDays"],
+    })
+    return result
+
+
+def key_vault_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    result = common(request)
+    app = compact(request["metadata"]["application"])[:8] or "app"
+    env = request["spec"]["environment"]
+    name = f"kv-{app}-{env}-{suffix(request)}"[:24].rstrip("-")
+    result.update({
+        "key_vault_name": name,
+        "sku_name": parameters["sku"].lower(),
+        "purge_protection_enabled": parameters["purgeProtection"],
+        "soft_delete_retention_days": parameters["softDeleteRetentionDays"],
+        "public_network_access_enabled": parameters["publicNetworkAccess"] == "Enabled",
+    })
+    return result
+
+
+def managed_identity_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    result = common(request)
+    app = slug(request["metadata"]["application"])
+    env = request["spec"]["environment"]
+    result["identity_name"] = f"id-{app}-{env}-{suffix(request)}"[:128].rstrip("-")
+    result["tags"] = {**result["tags"], "identity_purpose": parameters["purpose"]}
+    return result
+
+
+def service_bus_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    result = common(request)
+    app = compact(request["metadata"]["application"])[:24] or "app"
+    env = request["spec"]["environment"]
+    result.update({
+        "service_bus_name": f"sb-{app}-{env}-{suffix(request)}"[:50].rstrip("-"),
+        "sku": parameters["sku"],
+        "capacity": parameters["capacity"],
+        "public_network_access_enabled": parameters["publicNetworkAccess"] == "Enabled",
+    })
+    return result
+
+
+RENDERERS = {
+    "acr": acr_tfvars,
+    "storage": storage_tfvars,
+    "key-vault": key_vault_tfvars,
+    "managed-identity": managed_identity_tfvars,
+    "service-bus": service_bus_tfvars,
+}
 
 
 def main() -> None:
@@ -127,7 +236,6 @@ def main() -> None:
 
     request = load(args.request)
     validate_request_envelope(request)
-
     spec = request["spec"]
     service_dir = ROOT / "services" / spec["service"] / spec["templateVersion"]
     if not service_dir.is_dir():
@@ -143,18 +251,18 @@ def main() -> None:
     validate_parameters(parameters, schema)
     apply_policy(spec["environment"], parameters, policy)
 
-    if spec["service"] == "acr":
-        tfvars = acr_tfvars(request, parameters, args.name_prefix)
-    else:
+    renderer = RENDERERS.get(spec["service"])
+    if not renderer:
         fail(f"renderer not implemented for service {spec['service']}")
+    tfvars = renderer(request, parameters, args.name_prefix) if spec["service"] == "acr" else renderer(request, parameters)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(tfvars, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
     print(json.dumps({
         "request": request["metadata"]["name"],
         "service": f"{spec['service']}/{spec['templateVersion']}",
         "environment": spec["environment"],
+        "lifecycle": catalog["lifecycle"],
         "rootStack": catalog["rootStack"],
         "tfvars": str(args.output),
     }, indent=2))
