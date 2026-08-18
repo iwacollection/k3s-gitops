@@ -4,17 +4,26 @@
 enterprise-cicd/
 ├── architecture/                 # control-plane architecture and ownership boundaries
 ├── contracts/                    # machine-readable environment/state/identity/repository contracts
+├── iac-catalog/                  # platform-owned Terraform service catalog
+│   ├── request.schema.json       # common infrastructure request envelope
+│   └── services/
+│       ├── _template/            # mandatory template for every catalog service
+│       └── <service>/v1/         # schema/defaults/policy/module mapping/example
+├── iac-requests/                 # application-team editable infrastructure requests
+│   ├── dev/
+│   ├── test/
+│   └── prod/
 ├── terraform/
 │   ├── bootstrap/                # creates only IaC prerequisites
 │   ├── state/                    # backend/state-key rendering
-│   ├── modules/                  # reusable Terraform modules
+│   ├── modules/                  # reusable Terraform modules owned by Platform/SRE
 │   │   ├── resource-group/
 │   │   ├── managed-identity/
 │   │   ├── acr/
 │   │   ├── network/
 │   │   ├── aks/
 │   │   └── workload-base/
-│   └── stacks/                   # root modules / state boundaries
+│   └── stacks/                   # root modules / state boundaries; not normal developer edit surface
 │       ├── platform/
 │       │   ├── governance/
 │       │   ├── connectivity/
@@ -93,4 +102,4 @@ enterprise-cicd/
 
 ## Control-plane rule
 
-The directory structure is intentionally split by responsibility. Application CI, Azure infrastructure delivery and Kubernetes GitOps CD are separate control paths. Production implementation starts only after the management framework, state boundaries, identity boundaries, validation and protected environment model are stable.
+The directory structure is intentionally split by responsibility. Normal application-team infrastructure changes are request-driven: developers edit `iac-requests`, while Platform/SRE owns the Terraform modules, root stacks, schemas, defaults, policy, state and identities. Application CI, Azure infrastructure delivery and Kubernetes GitOps CD remain separate control paths. Production implementation starts only after the management framework, state boundaries, identity boundaries, validation and protected environment model are stable.
