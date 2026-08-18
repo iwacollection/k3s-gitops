@@ -17,17 +17,61 @@ on:
         required: true
         default: false
         type: boolean
+  push:
+    branches:
+      - design/azure-enterprise-control-plane-v1
+    paths:
+      - enterprise-cicd/activation/requests/platform-build-images-dev.json
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: platform-build-images-${{ inputs.acr_name }}
+  group: platform-build-images-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      acr_name: ${{ steps.request.outputs.acr_name }}
+      github_environment: ${{ steps.request.outputs.github_environment }}
+      confirm_publish: ${{ steps.request.outputs.confirm_publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve audited activation request
+        id: request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ACR_NAME: ${{ inputs.acr_name }}
+          INPUT_ENVIRONMENT: ${{ inputs.github_environment }}
+          INPUT_CONFIRM: ${{ inputs.confirm_publish }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            REQUEST=enterprise-cicd/activation/requests/platform-build-images-dev.json
+            test -f "$REQUEST"
+            ACR_NAME="$(jq -r '.acrName // empty' "$REQUEST")"
+            PLATFORM_ENVIRONMENT="$(jq -r '.githubEnvironment // empty' "$REQUEST")"
+            CONFIRM="$(jq -r '.confirmPublish // false' "$REQUEST")"
+            REQUEST_ID="$(jq -r '.requestId // empty' "$REQUEST")"
+            test -n "$REQUEST_ID"
+          else
+            ACR_NAME="$INPUT_ACR_NAME"
+            PLATFORM_ENVIRONMENT="$INPUT_ENVIRONMENT"
+            CONFIRM="$INPUT_CONFIRM"
+          fi
+          test -n "$ACR_NAME"
+          case "$PLATFORM_ENVIRONMENT" in dev|test|prod) ;; *) echo "Unsupported environment: $PLATFORM_ENVIRONMENT" >&2; exit 1 ;; esac
+          test "$CONFIRM" = "true"
+          echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "github_environment=$PLATFORM_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "confirm_publish=true" >> "$GITHUB_OUTPUT"
+
   preflight:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,11 +80,13 @@ jobs:
         run: python enterprise-cicd/activation/validate_readiness.py
 
   publish:
-    if: ${{ inputs.confirm_publish }}
-    needs: preflight
+    if: ${{ needs.resolve.outputs.confirm_publish == 'true' }}
+    needs:
+      - resolve
+      - preflight
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: ${{ inputs.github_environment }}
+    environment: ${{ needs.resolve.outputs.github_environment }}
     strategy:
       fail-fast: false
       matrix:
@@ -56,14 +102,10 @@ jobs:
         id: auth
         shell: bash
         env:
-          PLATFORM_ENVIRONMENT: ${{ inputs.github_environment }}
+          PLATFORM_ENVIRONMENT: ${{ needs.resolve.outputs.github_environment }}
         run: |
           set -euo pipefail
           BINDING=enterprise-cicd/contracts/environment-bindings.json
-          case "$PLATFORM_ENVIRONMENT" in
-            dev|test|prod) ;;
-            *) echo "Unsupported platform environment: $PLATFORM_ENVIRONMENT" >&2; exit 1 ;;
-          esac
           CLIENT_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")"
           TENANT_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")"
           SUBSCRIPTION_ID="$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")"
@@ -86,7 +128,7 @@ jobs:
         shell: bash
         env:
           IMAGE_KEY: ${{ matrix.image_key }}
-          ACR_NAME: ${{ inputs.acr_name }}
+          ACR_NAME: ${{ needs.resolve.outputs.acr_name }}
         run: |
           set -euo pipefail
           CATALOG=enterprise-cicd/build-images/versions.json
@@ -106,7 +148,7 @@ jobs:
       - name: Refuse mutable overwrite
         shell: bash
         env:
-          ACR_NAME: ${{ inputs.acr_name }}
+          ACR_NAME: ${{ needs.resolve.outputs.acr_name }}
           REPOSITORY: ${{ steps.image.outputs.repository }}
           VERSION: ${{ steps.image.outputs.version }}
         run: |
@@ -119,7 +161,7 @@ jobs:
       - name: Build and push versioned platform image
         shell: bash
         env:
-          ACR_NAME: ${{ inputs.acr_name }}
+          ACR_NAME: ${{ needs.resolve.outputs.acr_name }}
           LOGIN_SERVER: ${{ steps.image.outputs.login_server }}
           REPOSITORY: ${{ steps.image.outputs.repository }}
           VERSION: ${{ steps.image.outputs.version }}
@@ -135,7 +177,7 @@ jobs:
       - name: Record immutable digest evidence
         shell: bash
         env:
-          ACR_NAME: ${{ inputs.acr_name }}
+          ACR_NAME: ${{ needs.resolve.outputs.acr_name }}
           LOGIN_SERVER: ${{ steps.image.outputs.login_server }}
           REPOSITORY: ${{ steps.image.outputs.repository }}
           VERSION: ${{ steps.image.outputs.version }}
