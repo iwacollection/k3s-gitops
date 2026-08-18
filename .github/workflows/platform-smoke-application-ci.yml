@@ -1,5 +1,6 @@
 name: Platform Smoke Application CI
 
+# Real DEV E2E launcher: CI produces an immutable artifact only; Flux remains the Kubernetes write plane.
 on:
   pull_request:
     paths:
