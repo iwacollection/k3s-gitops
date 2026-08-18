@@ -1,0 +1,46 @@
+name: Terraform Framework Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/terraform/**'
+      - '.github/workflows/terraform-framework-validate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'enterprise-cicd/terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-framework:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive enterprise-cicd/terraform
+
+      - name: Initialize platform identity stack without backend
+        run: terraform -chdir=enterprise-cicd/terraform/stacks/platform/identity init -backend=false -input=false
+
+      - name: Validate platform identity stack
+        run: terraform -chdir=enterprise-cicd/terraform/stacks/platform/identity validate
+
+      - name: Assert no apply is executed by validation workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nE '(^|[[:space:]])terraform([[:space:]]+-chdir=[^[:space:]]+[[:space:]]+)?apply([[:space:]]|$)' .github/workflows/terraform-framework-validate.yml; then
+            echo 'terraform apply is forbidden in framework validation.' >&2
+            exit 1
+          fi
