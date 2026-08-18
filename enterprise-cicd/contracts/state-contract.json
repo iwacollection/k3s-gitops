@@ -16,7 +16,8 @@
     "split_when_owner_differs": true,
     "split_when_lifecycle_differs": true,
     "split_when_rbac_differs": true,
-    "split_high_blast_radius_platform_from_workloads": true
+    "split_high_blast_radius_platform_from_workloads": true,
+    "catalog_request_state_isolated": true
   },
   "platform_keys": {
     "governance": "platform/governance.tfstate",
@@ -27,6 +28,7 @@
     "aks": "platform/aks.tfstate"
   },
   "workload_key_pattern": "workload/{environment}/{workload}.tfstate",
+  "catalog_key_pattern": "catalog/{environment}/{service}/{request}.tfstate",
   "production_target": {
     "platform_and_workload_backend_separation": "recommended-by-risk-and-scale",
     "environment_isolation": "separate-rbac-and-prefer-separate-storage-scope"
