@@ -1,0 +1,11 @@
+{
+  "apiVersion": "platform.release/v1",
+  "kind": "ReleaseProfile",
+  "metadata": {"name": "canary-v1", "strategy": "canary", "version": "v1"},
+  "spec": {
+    "requires": ["signed-artifact", "sbom", "health-check", "metrics-gate"],
+    "trafficSteps": [10, 50, 100],
+    "verification": {"errorRate": "policy", "latency": "policy", "duration": "policy"},
+    "rollback": {"automaticOnGateFailure": true, "target": "previous-approved-digest"}
+  }
+}
