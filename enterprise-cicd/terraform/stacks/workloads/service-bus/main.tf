@@ -41,3 +41,13 @@ module "private_endpoint" {
   private_dns_zone_ids           = [data.azurerm_private_dns_zone.service_bus.id]
   tags                           = var.tags
 }
+
+module "resource_lock" {
+  count  = lookup(var.tags, "environment", "") == "prod" ? 1 : 0
+  source = "../../../modules/resource-lock"
+
+  name       = "lock-${var.service_bus_name}"
+  scope      = module.service_bus.id
+  lock_level = "CanNotDelete"
+  notes      = "Production Service Bus namespace protected by enterprise IaC policy."
+}

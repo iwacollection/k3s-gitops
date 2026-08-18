@@ -8,6 +8,7 @@
         "privateEndpointSubnet": "snet-private-endpoints",
         "postgresDelegatedSubnet": "snet-postgresql",
         "dnsZones": {
+          "storage": "privatelink.blob.core.windows.net",
           "key-vault": "privatelink.vaultcore.azure.net",
           "service-bus": "privatelink.servicebus.windows.net",
           "managed-redis": "privatelink.redis.azure.net",
@@ -22,6 +23,7 @@
         "privateEndpointSubnet": "snet-private-endpoints",
         "postgresDelegatedSubnet": "snet-postgresql",
         "dnsZones": {
+          "storage": "privatelink.blob.core.windows.net",
           "key-vault": "privatelink.vaultcore.azure.net",
           "service-bus": "privatelink.servicebus.windows.net",
           "managed-redis": "privatelink.redis.azure.net",
@@ -36,6 +38,7 @@
         "privateEndpointSubnet": "snet-private-endpoints",
         "postgresDelegatedSubnet": "snet-postgresql",
         "dnsZones": {
+          "storage": "privatelink.blob.core.windows.net",
           "key-vault": "privatelink.vaultcore.azure.net",
           "service-bus": "privatelink.servicebus.windows.net",
           "managed-redis": "privatelink.redis.azure.net",

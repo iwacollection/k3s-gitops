@@ -38,3 +38,13 @@ module "postgresql" {
   entra_admin_principal_type   = var.entra_admin_principal_type
   tags                         = var.tags
 }
+
+module "resource_lock" {
+  count  = lookup(var.tags, "environment", "") == "prod" ? 1 : 0
+  source = "../../../modules/resource-lock"
+
+  name       = "lock-${var.postgresql_server_name}"
+  scope      = module.postgresql.id
+  lock_level = "CanNotDelete"
+  notes      = "Production PostgreSQL Flexible Server protected by enterprise IaC policy."
+}

@@ -43,3 +43,13 @@ module "private_endpoint" {
   private_dns_zone_ids           = [data.azurerm_private_dns_zone.key_vault.id]
   tags                           = var.tags
 }
+
+module "resource_lock" {
+  count  = lookup(var.tags, "environment", "") == "prod" ? 1 : 0
+  source = "../../../modules/resource-lock"
+
+  name       = "lock-${var.key_vault_name}"
+  scope      = module.key_vault.id
+  lock_level = "CanNotDelete"
+  notes      = "Production Key Vault protected by enterprise IaC policy."
+}

@@ -28,6 +28,10 @@ variable "entra_admin_principal_type" {
   type    = string
   default = "Group"
 }
+variable "lock_enabled" {
+  type    = bool
+  default = false
+}
 variable "tags" {
   type    = map(string)
   default = {}

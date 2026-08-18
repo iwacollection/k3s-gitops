@@ -14,6 +14,10 @@ variable "network_resource_group_name" { type = string }
 variable "virtual_network_name" { type = string }
 variable "private_endpoint_subnet_name" { type = string }
 variable "private_dns_zone_name" { type = string }
+variable "lock_enabled" {
+  type    = bool
+  default = false
+}
 variable "tags" {
   type    = map(string)
   default = {}

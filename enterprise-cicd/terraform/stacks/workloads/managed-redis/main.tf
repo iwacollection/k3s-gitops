@@ -44,3 +44,13 @@ module "private_endpoint" {
   private_dns_zone_ids           = [data.azurerm_private_dns_zone.redis.id]
   tags                           = var.tags
 }
+
+module "resource_lock" {
+  count  = lookup(var.tags, "environment", "") == "prod" ? 1 : 0
+  source = "../../../modules/resource-lock"
+
+  name       = "lock-${var.redis_name}"
+  scope      = module.redis.id
+  lock_level = "CanNotDelete"
+  notes      = "Production Azure Managed Redis protected by enterprise IaC policy."
+}
