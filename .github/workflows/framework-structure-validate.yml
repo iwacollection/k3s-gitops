@@ -36,6 +36,18 @@ jobs:
             enterprise-cicd/iac-requests/dev
             enterprise-cicd/iac-requests/test
             enterprise-cicd/iac-requests/prod
+            enterprise-cicd/ci-catalog/java/springboot-maven-v1
+            enterprise-cicd/ci-catalog/python/python-uv-v1
+            enterprise-cicd/ci-catalog/go/go-service-v1
+            enterprise-cicd/ci-catalog/cpp/cmake-conan-v1
+            enterprise-cicd/application-definitions
+            enterprise-cicd/release-catalog/rolling/rolling-v1
+            enterprise-cicd/release-catalog/canary/canary-v1
+            enterprise-cicd/release-catalog/blue-green/blue-green-v1
+            enterprise-cicd/release-requests
+            enterprise-cicd/promotion/policies
+            enterprise-cicd/promotion/verification
+            enterprise-cicd/promotion/rollback
             enterprise-cicd/terraform/bootstrap
             enterprise-cicd/terraform/state
             enterprise-cicd/terraform/modules/resource-group
