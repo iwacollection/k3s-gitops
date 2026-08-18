@@ -2,21 +2,45 @@
 
 > Microsoft Azure 企业级 IaC（Infrastructure as Code，基础设施即代码）+ CI/CD 平台控制面。
 >
-> 核心原则：**Platform owns implementation; developers submit intent.** 平台团队维护 Terraform、Pipeline、Build Image、Policy、发布策略和权限边界；研发团队提交需求声明，不重复实现平台能力。
+> 核心原则：**Platform owns implementation; developers submit intent.** 平台团队维护 Terraform、Pipeline、Build Image、Policy、发布策略、身份和权限边界；研发提交标准化需求，不重复实现平台能力。
 
-## 1. 当前开发位置
-
-企业平台 V1 当前位于：
+## 1. 当前状态
 
 ```text
 Repository: iwacollection/k3s-gitops
-Branch:     design/azure-enterprise-control-plane-v1
-PR:         #5 (Draft)
+Platform branch: design/azure-enterprise-control-plane-v1
+Platform PR: #5 (Draft)
+DEV desired-state branch: gitops/dev
+TEST desired-state branch: gitops/test
+PROD desired-state branch: gitops/prod
 ```
 
-`main` 仍是稳定基线。本文描述的是 Draft PR #5 中的控制面实现。
+`main` 仍是稳定基线，PR #5 暂不合并。
 
-## 2. 总体工作流
+当前 V1 不再只是“框架代码 Ready”：**真实 Azure DEV E2E 已经完成并验证通过。**
+
+```text
+GitHub OIDC
+  -> Azure
+  -> ACR
+  -> governed build image
+  -> Application CI
+  -> immutable application digest
+  -> Release Request
+  -> protected GitOps PR
+  -> gitops/dev
+  -> Flux
+  -> AKS
+  -> Deployment Ready
+  -> Endpoint Ready
+  -> exact digest verification
+```
+
+详细证据：
+
+`enterprise-cicd/activation/DEV-ACTIVATION-EVIDENCE.md`
+
+## 2. 平台职责边界
 
 ```text
 Developer
@@ -29,25 +53,35 @@ Developer
    |       -> Protected Apply
    |       -> Azure
    |
-   +-- Application Code
-   |       -> CI Build Catalog
+   +-- Application Definition + Source Code
+   |       -> Build Profile
+   |       -> Standard Build Image @ sha256
    |       -> Test / Security
    |       -> SBOM / Provenance / Sign
-   |       -> Immutable Digest
+   |       -> Immutable Application Digest
    |       -> ACR
    |
    +-- Release Request
            -> Promotion Policy
-           -> Protected GitOps PR
+           -> Protected Desired-State PR
            -> Flux
            -> AKS
-           -> Verify
-           -> Approved Ledger or Rollback PR
+           -> Read-only Verification
 ```
+
+最终写控制面保持单一：
+
+```text
+GitHub Actions -> Application CI
+Azure DevOps   -> IaC / Environment Governance
+Flux           -> Kubernetes write/reconciliation plane
+```
+
+CI Workflow 不直接 `kubectl apply/create`，也不直接 Helm install/upgrade 生产工作负载。
 
 ## 3. IaC 管理模型
 
-研发默认**不直接写 `azurerm_*`**，只提交 `InfrastructureRequest`。平台维护标准产品目录：
+研发默认不直接写 `azurerm_*`，而是提交 `InfrastructureRequest`：
 
 ```text
 iac-catalog/services/<service>/<version>/
@@ -58,31 +92,37 @@ iac-catalog/services/<service>/<version>/
 └── request.example.json
 ```
 
-每个产品映射到平台维护的 Terraform Module 和 Root Stack。请求通过 Schema、环境 Policy、平台命名和网络/身份绑定后，才被编译成 `.auto.tfvars.json`。
+请求经过 Schema、Defaults、环境 Policy、Naming、Network Binding、Identity Binding 后，由平台 Renderer 编译成 Terraform 输入。
 
-### 当前 IaC Service Catalog
+### IaC Service Catalog V1
 
 | Product | Lifecycle | 关键生产约束 |
 |---|---|---|
-| `acr/v1` | active | 受控 SKU、不可变 Artifact 目标 |
-| `storage/v1` | active | Shared Key 禁用、版本化/保留策略、生产复制策略 |
-| `managed-identity/v1` | active | Workload Identity 边界 |
-| `key-vault/v1` | active | Public Network Disabled、Private Endpoint、Private DNS、Purge Protection |
-| `service-bus/v1` | active | Premium-only Private Endpoint、Local Auth Disabled、Public Network Disabled |
-| `managed-redis/v1` | active | Azure Managed Redis、Encrypted、Access Keys Disabled、Private Endpoint/DNS |
-| `postgresql-flexible/v1` | preview | VNet Delegation、Private DNS、Entra-only；PROD 等待平台 DBA Entra Admin Binding |
+| `acr/v1` | active | 受控 SKU、Artifact Registry 基线 |
+| `storage/v1` | active | Shared Key Disabled、Private Endpoint、Diagnostics、生产 Lock |
+| `managed-identity/v1` | active | Workload Identity / RBAC 边界 |
+| `key-vault/v1` | active | Public Network Disabled、Private Endpoint/DNS、Purge Protection、Diagnostics |
+| `service-bus/v1` | active | Premium-only Private Networking、Local Auth Disabled、Diagnostics |
+| `managed-redis/v1` | active | Azure Managed Redis、Access Keys Disabled、Private Endpoint/DNS、Diagnostics |
+| `postgresql-flexible/v1` | DEV/TEST active | VNet Delegation、Private DNS、Entra-only；PROD 等待真实 DBA Entra Group Binding |
 
-### Terraform State
+研发不填写平台 VNet/Subnet/DNS Resource ID。环境资源通过：
 
-平台 Stack 按生命周期和 Blast Radius 独立 State。研发 Catalog Request 使用：
+`contracts/environment-bindings.json`
+
+统一绑定。
+
+## 4. Terraform State / Plan / Apply
+
+Catalog Request 独立 State：
 
 ```text
 catalog/{environment}/{service}/{request}.tfstate
 ```
 
-一个申请一个 State/Lock，不让多个业务资源互相覆盖或扩大变更半径。
+一个请求一个 State/Lock，降低 Blast Radius（爆炸半径；人话：一次错误变更最多影响多大范围）。
 
-### Plan / Apply 分权
+身份分离：
 
 ```text
 DEV   tf-plan-dev   / tf-apply-dev
@@ -90,35 +130,46 @@ TEST  tf-plan-test  / tf-apply-test
 PROD  tf-plan-prod  / tf-apply-prod
 ```
 
-使用 OIDC/WIF，禁止一个万能 Contributor Identity 管理所有环境，禁止 PR Pipeline 直接 Apply。
+治理规则：
 
-## 4. Azure Network Foundation
+- PR 只 Plan，不 Apply
+- Merge 后重新 Plan
+- Apply 使用精确 Saved Plan
+- WIF/OIDC（Workload Identity Federation，工作负载联合身份；人话：不用长期 Client Secret）
+- PROD Environment Approval
+- Branch Control
+- Required Template
+- Exclusive Lock
+- 禁止一个万能 Contributor Identity 管全部环境
 
-平台 Connectivity Stack 已具备：
+## 5. Network Foundation
+
+平台 Connectivity Stack 已覆盖：
 
 ```text
-VNet / Subnet
+VNet
+Subnet
 NSG
 Route Table / UDR
 NAT Gateway
-Private DNS + VNet Link
-Private Endpoint + DNS Zone Group
+Private DNS
+VNet Link
+Private Endpoint
+DNS Zone Group
 RBAC Role Assignment
 ```
-
-研发不填写原始 VNet/Subnet/DNS Resource ID。`contracts/environment-bindings.json` 将 `dev/test/prod` 映射到平台拥有的网络资源名字。
 
 标准网络槽位包括：
 
 ```text
 snet-aks
 snet-private-endpoints
-snet-postgresql   # delegated to Microsoft.DBforPostgreSQL/flexibleServers
+snet-postgresql
 ```
 
-## 5. AKS Platform
+## 6. AKS Platform
 
-标准 AKS Module / Root Stack 已实现并通过 AzureRM 4.81 validate：
+标准 AKS Module / Root Stack 包含：
 
 - Standard tier
 - private cluster option
@@ -129,55 +180,39 @@ snet-postgresql   # delegated to Microsoft.DBforPostgreSQL/flexibleServers
 - Azure Policy
 - Azure CNI
 - Standard Load Balancer
-- Key Vault CSI secret rotation
+- Key Vault CSI + rotation
 - system node pool autoscaling
-- ACR Pull RBAC via kubelet identity
+- ACR Pull via kubelet identity
+- Container Insights
+- Managed Prometheus
 
-当前 Lab 继续复用已有 `k8s-test-cicd` AKS Automatic；Terraform 标准 AKS 模块不会自动替换现有实验集群。
+当前真实 DEV 复用已有：
 
-## 6. Data Platform
+```text
+Resource Group: group-test
+AKS:            k8s-test-cicd
+Namespace:      cicd-dev
+```
 
-### Azure Managed Redis
-
-标准产品使用 `azurerm_managed_redis`，默认关闭公共网络，通过 Private Endpoint 接入，并关闭 Access Key Authentication、强制 Encrypted client protocol。生产策略要求 HA 和受控 SKU。
-
-### PostgreSQL Flexible Server
-
-标准产品使用 VNet-integrated Flexible Server：
-
-- Delegated Subnet
-- Private DNS
-- Public Network Disabled
-- System Assigned Identity
-- Microsoft Entra Authentication Enabled
-- Password Authentication Disabled
-- Backup/HA 由环境 Policy 约束
-
-当前 V1 的 DEV/TEST 模板可用；PROD 明确阻断，直到平台级 DBA Entra Administrator Binding 被配置，而不是让研发自己填管理员账号。
+标准 Terraform AKS Module 不会自动替换这个实验集群。
 
 ## 7. Observability Platform
 
-`platform/observability` Root Stack 已建立：
+平台已包含：
 
 - Log Analytics Workspace
-- Azure Monitor Workspace（Managed Prometheus 基础）
-- Local Auth Disabled
-- Retention / Quota 受控
+- Azure Monitor Workspace
+- Container Insights DCR/DCRA
+- Managed Prometheus DCE/DCR/DCRA
+- Generic Diagnostic Setting Module
+- platform-owned `diagnostic-categories.json`
+- Storage / Key Vault / Service Bus / Redis Diagnostic Settings
 
-后续 AKS Monitor/Managed Prometheus 关联和 Managed Grafana 属于平台集成层，而不是每个应用自行创建。
+Managed Grafana 属于 post-V1 可选能力。
 
 ## 8. CI Build Platform
 
-CI 使用 GitHub Actions Reusable Workflow。单应用内部使用 `needs` DAG，Monorepo/多应用使用外层 `matrix`。
-
-```text
-resolve
-  -> source-scan + build-test
-  -> image-build
-  -> image-scan + SBOM
-  -> sign
-  -> release-evidence
-```
+GitHub Actions 使用 Reusable Workflow + `needs` DAG；多项目/Monorepo 可在外层使用 Matrix。
 
 当前标准 Build Profile：
 
@@ -188,86 +223,199 @@ resolve
 | Go | `go/go-service-v1` | `go-builder:v1` |
 | C++ | `cpp/cmake-conan-v1` | `cpp-cmake-conan:v1` |
 
-统一生命周期：
+Build 生命周期：
 
 ```text
 prepare -> verify -> package
 ```
 
-CI 只负责产生可信制品，不持有 Terraform Apply 或生产 AKS 写权限。
+Application CI v2：
 
-## 9. Dependency / Cache
+```text
+resolve
+  -> source-scan + build-test
+  -> image-build
+  -> image-scan + SBOM
+  -> sign
+  -> release-evidence
+```
 
-平台统一 Maven / PyPI / Go Proxy / Conan Remote 策略。Cache Key 必须绑定 Lock File、Build Profile、Build Image Version 和 Architecture，避免多项目共享可写缓存导致污染、ABI 不一致和并发损坏。
+### Monorepo / 多服务
 
-## 10. Artifact 与供应链安全
+Application Definition 支持 `sourcePath`，CI 不再假设代码一定在仓库根目录。
+
+### Dependency Cache
+
+Cache 与源码工作区物理隔离：
+
+```text
+Source:       /workspace
+Cache:        $RUNNER_TEMP/platform-cache/<application>/<profile>
+Build Context isolated separately
+```
+
+这避免 Maven/PyPI/Go/Conan 缓存污染源码、打包产物或并发构建。
+
+## 9. 真实 Platform Build Images
+
+四套标准构建镜像已经真实发布到：
+
+`acrcicdc12c3a3699d8.azurecr.io`
+
+并通过 immutable digest Gate：
+
+| Image | Digest |
+|---|---|
+| `build/java21-maven:v1` | `sha256:02ea4848f16f7d70811bcd1c66b78354648510341d835ab06154eb3052dcbaf6` |
+| `build/python-uv:v1` | `sha256:f6d63e38fbb3bd2e1edae918afbc1e3abafdb0f4dc961449d33f5c2d8722c02d` |
+| `build/go-builder:v1` | `sha256:813d1bcbe71bb2bdaebcb622c4af65d5a02ee6196e98c0aed3535109f51f5ace` |
+| `build/cpp-cmake-conan:v1` | `sha256:8864bafcd66839cc76577f450c4988b0d06d4e3be6bcf3ba6b29c332faf6fb6e` |
+
+应用 CI 运行时不是只信任 `:v1`，而是先从 ACR 解析它的 `sha256`，再使用：
+
+```text
+build-image@sha256:...
+```
+
+作为真实编译环境。
+
+## 10. Artifact / Supply Chain Security
 
 ```text
 Source Commit
  -> Build Profile
- -> Build Image Version
+ -> Build Image @ sha256
  -> Tests
- -> Source/Container Scan
+ -> Source Scan
+ -> Image Build
+ -> Container Scan
  -> SBOM
  -> BuildKit Provenance
- -> Cosign Signature
+ -> Cosign OIDC Signature
  -> ACR sha256 Digest
 ```
 
-遵守 **Build Once, Promote Same Digest**。DEV/TEST/PROD 使用同一 Digest，不允许生产重新 Build。
+坚持 **Build Once, Promote Same Digest**。
+
+安全 Gate 在真实 smoke CI 中曾检测并阻断 Debian runtime image 的可修复 HIGH 漏洞；平台升级基础镜像依赖后重新扫描通过，没有把 HIGH/CRITICAL Gate 改成 warning。
 
 ## 11. CD / GitOps
 
-CI 到 ACR 即停止。Release Request 驱动环境晋级：
+Release 只接受 immutable digest：
 
 ```text
-Artifact Digest
+Build Artifact
  -> Release Request
  -> Promotion Policy
- -> GitOps Desired State PR
- -> Flux
+ -> target Desired-State baseline
+ -> Promotion branch
+ -> protected GitOps PR
+ -> merge
+ -> Flux reconcile
  -> AKS
- -> Read-only Observation
- -> Verification
- -> Approved Ledger / Rollback PR
+ -> read-only verify
 ```
 
-环境只允许：
+允许的环境转换：
 
 ```text
 build -> dev -> test -> prod
 ```
 
-`rolling-v1` 已 execution-ready。Canary/Blue-Green 只保留 Catalog，直到真实 progressive-delivery controller 接入前不会伪装成可执行策略。
+环境 Desired-State 分支：
 
-Rollback 使用 last approved digest，不重新 Build。
+```text
+gitops/dev
+gitops/test
+gitops/prod
+```
 
-## 12. Azure DevOps IaC Governance
+Promotion 分支必须从目标 Desired-State 分支创建，禁止从平台开发分支直接向 `gitops/dev` 带入无关代码。
+
+## 12. Real DEV E2E
+
+验证应用：
+
+`platform-smoke-api`
+
+最终全绿 CI Artifact：
+
+```text
+Repository:
+acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api
+
+Digest:
+sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba
+```
+
+CI Gate：
+
+```text
+resolve          PASS
+source-scan      PASS
+build-test       PASS
+image-build      PASS
+image-scan       PASS
+SBOM             PASS
+Cosign sign      PASS
+release-evidence PASS
+```
+
+真实 Release Request：
+
+`release-requests/platform-smoke-api-to-dev.json`
+
+Promotion PR #6：
+
+```text
+base: gitops/dev
+commits: 1
+changed files: 3
+GitOps Platform Validate: PASS
+CD Closure Validate: PASS
+Framework Structure Validate: PASS
+```
+
+合并 commit：
+
+`37ae91eed8e2c40038524d1b524111056dc637ce`
+
+Flux / AKS 最终验证：
+
+```text
+Flux compliant:       true
+Deployment:           platform-smoke-api
+Namespace:            cicd-dev
+Desired replicas:     1
+Available replicas:   1
+Ready replicas:       1
+EndpointSlices:       1
+Ready endpoints:      1
+Exact digest:         PASS
+Verification result:  passed
+```
+
+实际运行镜像：
+
+`acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api@sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba`
+
+## 13. Azure DevOps IaC Governance
 
 Azure DevOps 负责 Terraform / Environment Governance：
 
-- Request discovery
+- IaC Request discovery
 - PR Terraform Plan
 - Plan Evidence
 - Merge-time re-plan
 - Exact saved-plan Apply
 - 固定 DEV/TEST/PROD Plan/Apply Service Connection
+- WIF/OIDC
 - Required Template
 - Branch Control
 - Approval
 - Exclusive Lock
 
-Service Connection 不使用运行时变量动态拼接，避免授权边界在 Pipeline 执行时漂移。
-
-## 13. GitHub Actions 与 Azure DevOps 分工
-
-```text
-GitHub Actions -> Application CI
-Azure DevOps   -> IaC / Environment Governance
-Flux           -> Kubernetes write/reconciliation plane
-```
-
-同一职责只保留一个最终写控制面，禁止 GitHub Actions 与 Azure DevOps 同时直接修改 PROD AKS。
+Service Connection 不允许通过运行时变量动态拼接。
 
 ## 14. Terraform 工程结构
 
@@ -292,6 +440,7 @@ terraform/
 │   ├── service-bus/
 │   ├── managed-redis/
 │   ├── postgresql-flexible/
+│   ├── diagnostic-setting/
 │   └── observability/
 └── stacks/
     ├── platform/
@@ -299,7 +448,8 @@ terraform/
     │   ├── acr/
     │   ├── connectivity/
     │   ├── aks/
-    │   └── observability/
+    │   ├── observability/
+    │   └── aks-observability/
     └── workloads/
         ├── storage/
         ├── key-vault/
@@ -311,21 +461,26 @@ terraform/
 
 ## 15. 自动验证
 
-平台代码自己必须通过治理测试，而不是等第一个研发项目踩坑：
+平台自身持续通过：
 
 - Control Contract Validate
 - Framework Structure Validate
-- Platform Catalog Validate
 - Terraform Framework Validate
+- Platform Catalog Validate
 - Build Platform Validate
 - Build Profile Smoke
 - GitOps Platform Validate
 - Azure DevOps Platform Validate
 - CD Closure Validate
+- Platform Activation Readiness
+- Azure DEV Activation Preflight
+- Platform Build Images Verify
+- Platform Smoke Application CI
+- Platform Smoke DEV Observe
 
-Terraform Root Stack 验证已经改为 **Matrix 并行**，当前 11 个 Root Stack 可同时 `init -backend=false + validate`，避免第一个失败阻断其余问题发现。
+Terraform 使用 **12 Root Stack Matrix 并行**执行 `init -backend=false + validate`，避免串行失败遮蔽其余问题。
 
-验证 Workflow 明确禁止执行 `terraform apply`，Flux Bootstrap 和真实 Azure 资源创建也保持显式受保护操作。
+Validation Workflow 明确禁止 `terraform apply`。
 
 ## 16. 研发日常入口
 
@@ -338,24 +493,27 @@ Infrastructure Request -> Plan -> Review -> Protected Apply
 代码：
 
 ```text
-Application Definition -> Standard Reusable CI -> Immutable Artifact
+Application Definition -> Standard Build Profile -> Reusable CI -> Immutable Artifact
 ```
 
 发布：
 
 ```text
-Release Request -> Promotion -> GitOps -> Flux -> Verify -> Evidence/Rollback
+Release Request -> Protected GitOps PR -> Flux -> Read-only Verify
 ```
 
-研发不需要分别学习怎么实现 Azure Provider Resource、GitHub Pipeline、Azure DevOps Apply 和生产 `kubectl`；这些属于平台维护能力。
+研发不需要重复维护 Terraform Provider Resource、CI Pipeline、生产 Kubernetes 写权限和环境策略。
 
-## 17. V1 剩余收口重点
+## 17. 下一阶段
 
-- PostgreSQL PROD Entra DBA Binding
-- AKS 与 Log Analytics / Managed Prometheus 的标准关联
-- Managed Grafana（可选）
-- Diagnostic Settings / Resource Locks / 更细 Policy Baseline
-- 将版本化 Platform Build Images 正式发布到 ACR
-- 用现有 Lab AKS 跑通第一条受控 DEV Promotion + Observation
+DEV V1 已完成真实激活。下一阶段重点不再是继续堆 DEV Module：
 
-在这些受保护控制面完成前，PR #5 保持 Draft，不自动创建额外 AKS 或生产资源。
+1. 激活 TEST Azure identity / environment binding。
+2. 用 **同一个 `platform-smoke-api` digest** 做 `dev -> test`，验证 Build Once / Promote Same Digest。
+3. 配置真实 PostgreSQL PROD Entra DBA Group Object ID + principal name；未配置前 PROD 保持硬阻断。
+4. 激活 PROD Protected Environment / Approval / Identity。
+5. 用同一 digest 做 `test -> prod`。
+6. 做 rollback / failed-health drill，验证 previous-approved-digest 回滚闭环。
+7. 可选 post-V1：Managed Grafana、真实 Canary/Blue-Green Controller。
+
+PR #5 在平台评审完成前继续保持 Draft，不自动合并到 `main`。
