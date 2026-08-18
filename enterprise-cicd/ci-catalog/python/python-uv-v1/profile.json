@@ -1,0 +1,13 @@
+{
+  "apiVersion": "platform.ci/v1",
+  "kind": "BuildProfile",
+  "metadata": {"name": "python-uv-v1", "language": "python", "version": "v1"},
+  "spec": {
+    "buildImage": "python-uv:v1",
+    "dependencyProxy": "pypi",
+    "commands": {"verify": "uv run pytest", "package": "uv build"},
+    "outputs": ["wheel", "container"],
+    "requiredControls": ["unit-test", "secret-scan", "sca", "sast", "sbom", "container-scan", "sign", "provenance"],
+    "cacheKeyInputs": ["uv.lock", "python-version", "build-image-version", "architecture"]
+  }
+}
