@@ -17,7 +17,7 @@
       "namespace": "flux-system",
       "scope": "cluster",
       "repository": "https://github.com/iwacollection/k3s-gitops",
-      "branch": "main",
+      "branch": "gitops/dev",
       "kustomizations": [
         {
           "name": "infra",
