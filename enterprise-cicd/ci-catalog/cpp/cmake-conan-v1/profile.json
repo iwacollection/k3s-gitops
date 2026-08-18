@@ -1,0 +1,13 @@
+{
+  "apiVersion": "platform.ci/v1",
+  "kind": "BuildProfile",
+  "metadata": {"name": "cmake-conan-v1", "language": "cpp", "version": "v1"},
+  "spec": {
+    "buildImage": "cpp-cmake-conan:v1",
+    "dependencyProxy": "cpp",
+    "commands": {"verify": "ctest --test-dir build --output-on-failure", "package": "cmake --build build --config Release"},
+    "outputs": ["binary", "container"],
+    "requiredControls": ["unit-test", "secret-scan", "sca", "sast", "sbom", "container-scan", "sign", "provenance"],
+    "cacheKeyInputs": ["conan.lock", "compiler", "compiler-version", "libc", "build-image-version", "architecture"]
+  }
+}
