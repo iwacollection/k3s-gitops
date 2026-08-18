@@ -1,0 +1,20 @@
+{
+  "apiVersion": "platform.gitops/v1",
+  "kind": "PromotionEvidence",
+  "metadata": {
+    "application": "platform-smoke-api",
+    "owner": "platform-engineering",
+    "environment": "dev"
+  },
+  "spec": {
+    "artifactRepository": "acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api",
+    "artifactDigest": "sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba",
+    "from": "build",
+    "to": "dev",
+    "releaseProfile": "rolling/rolling-v1",
+    "strategy": "rolling",
+    "executionEngine": "kubernetes-deployment",
+    "changeReason": "DEV platform E2E activation after governed CI, vulnerability scan, SBOM, provenance and Cosign signing gates passed",
+    "sourceRequest": "enterprise-cicd/release-requests/platform-smoke-api-to-dev.json"
+  }
+}
