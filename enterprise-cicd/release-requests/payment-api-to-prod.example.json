@@ -3,6 +3,7 @@
   "kind": "Release",
   "metadata": {"application": "payment-api", "owner": "payment-team"},
   "spec": {
+    "artifactRepository": "example.azurecr.io/payment-api",
     "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "from": "test",
     "to": "prod",
