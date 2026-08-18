@@ -12,7 +12,7 @@ def load(path: Path):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render a governed rollback to the previous approved digest.")
+    parser = argparse.ArgumentParser(description="Render a governed rollback to the last approved digest before the failed candidate.")
     parser.add_argument("--application", required=True)
     parser.add_argument("--environment", required=True, choices=["dev", "test", "prod"])
     parser.add_argument("--verification-result", required=True, type=Path)
@@ -35,12 +35,16 @@ def main() -> None:
         raise SystemExit("no approved release ledger exists; automatic rollback is not safe")
 
     ledger = load(ledger_path)
-    previous = ledger.get("spec", {}).get("previousApproved")
-    if not previous:
-        raise SystemExit("no previous approved release exists; automatic rollback is not safe")
+    baseline = ledger.get("spec", {}).get("current")
+    if not baseline:
+        raise SystemExit("no current approved release exists; automatic rollback is not safe")
 
-    repository = previous["artifactRepository"]
-    digest = previous["artifactDigest"]
+    failed_digest = result["spec"]["artifactDigest"]
+    repository = baseline["artifactRepository"]
+    digest = baseline["artifactDigest"]
+    if digest == failed_digest:
+        raise SystemExit("failed candidate already equals current approved digest; automatic rollback target is ambiguous")
+
     relative_base = f"../../../../apps/{args.application}/base"
     overlay = "\n".join([
         "apiVersion: kustomize.config.k8s.io/v1beta1",
@@ -61,10 +65,12 @@ def main() -> None:
         "kind": "RollbackEvidence",
         "metadata": {"application": args.application, "environment": args.environment},
         "spec": {
-            "failedDigest": result["spec"]["artifactDigest"],
+            "failedDigest": failed_digest,
             "rollbackRepository": repository,
             "rollbackDigest": digest,
+            "rollbackBaseline": "last-approved-before-candidate",
             "sourceVerificationResult": args.verification_result.as_posix(),
+            "sourceApprovedRelease": ledger_path.as_posix(),
             "reason": "verification-gate-failed",
             "rebuild": False,
             "postRollbackVerificationRequired": policy["spec"]["postRollbackVerificationRequired"],
@@ -72,7 +78,7 @@ def main() -> None:
     }
     evidence_path = app_dir / "rollback-evidence.json"
     evidence_path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"application": args.application, "environment": args.environment, "rollbackDigest": digest, "rollbackEvidence": evidence_path.as_posix()}, indent=2))
+    print(json.dumps({"application": args.application, "environment": args.environment, "failedDigest": failed_digest, "rollbackDigest": digest, "rollbackEvidence": evidence_path.as_posix()}, indent=2))
 
 
 if __name__ == "__main__":
