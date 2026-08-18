@@ -1,0 +1,143 @@
+name: iac-request-apply-$(Date:yyyyMMdd).$(Rev:r)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - enterprise-cicd/iac-requests/**
+
+pr: none
+
+lockBehavior: sequential
+
+variables:
+  - group: vg-enterprise-iac-state
+
+jobs:
+  - job: Discover
+    displayName: Discover merged IaC requests
+    pool:
+      vmImage: ubuntu-24.04
+    steps:
+      - checkout: self
+        clean: true
+        fetchDepth: 0
+
+      - bash: |
+          set -euo pipefail
+          git rev-parse HEAD^
+          python enterprise-cicd/ci-scripts/infra/discover_iac_requests.py \
+            --base-ref HEAD^ \
+            --head-ref HEAD \
+            --azure-output \
+            --output "$(Pipeline.Workspace)/iac-request-matrix.json"
+        name: discover
+        displayName: Build merged request matrices
+
+      - publish: $(Pipeline.Workspace)/iac-request-matrix.json
+        artifact: iac-request-discovery
+        displayName: Publish request discovery evidence
+
+  - job: Plan_DEV
+    displayName: Re-plan DEV request after merge
+    dependsOn: Discover
+    pool:
+      vmImage: ubuntu-24.04
+    strategy:
+      maxParallel: 4
+      matrix: $[ dependencies.Discover.outputs['discover.devMatrix'] ]
+    condition: and(succeeded(), eq(variables['enabled'], 'true'))
+    steps:
+      - template: /enterprise-cicd/azure-devops/templates/terraform/request-plan.yml
+        parameters:
+          requestPath: $(requestPath)
+          azureServiceConnection: sc-tf-plan-dev
+          tfstateStorageAccount: $(TFSTATE_STORAGE_ACCOUNT)
+          tfstateResourceGroup: $(TFSTATE_RESOURCE_GROUP)
+          namePrefix: $(TF_NAME_PREFIX)
+          planArtifactName: $(planArtifactName)
+
+  - job: Apply_DEV
+    displayName: Apply DEV approved plan
+    dependsOn: [Discover, Plan_DEV]
+    pool:
+      vmImage: ubuntu-24.04
+    strategy:
+      maxParallel: 4
+      matrix: $[ dependencies.Discover.outputs['discover.devMatrix'] ]
+    condition: and(succeeded(), eq(variables['enabled'], 'true'))
+    steps:
+      - template: /enterprise-cicd/azure-devops/templates/terraform/request-apply.yml
+        parameters:
+          azureServiceConnection: sc-tf-apply-dev
+          planArtifactName: $(planArtifactName)
+
+  - job: Plan_TEST
+    displayName: Re-plan TEST request after merge
+    dependsOn: Discover
+    pool:
+      vmImage: ubuntu-24.04
+    strategy:
+      maxParallel: 2
+      matrix: $[ dependencies.Discover.outputs['discover.testMatrix'] ]
+    condition: and(succeeded(), eq(variables['enabled'], 'true'))
+    steps:
+      - template: /enterprise-cicd/azure-devops/templates/terraform/request-plan.yml
+        parameters:
+          requestPath: $(requestPath)
+          azureServiceConnection: sc-tf-plan-test
+          tfstateStorageAccount: $(TFSTATE_STORAGE_ACCOUNT)
+          tfstateResourceGroup: $(TFSTATE_RESOURCE_GROUP)
+          namePrefix: $(TF_NAME_PREFIX)
+          planArtifactName: $(planArtifactName)
+
+  - job: Apply_TEST
+    displayName: Apply TEST approved plan
+    dependsOn: [Discover, Plan_TEST]
+    pool:
+      vmImage: ubuntu-24.04
+    strategy:
+      maxParallel: 2
+      matrix: $[ dependencies.Discover.outputs['discover.testMatrix'] ]
+    condition: and(succeeded(), eq(variables['enabled'], 'true'))
+    steps:
+      - template: /enterprise-cicd/azure-devops/templates/terraform/request-apply.yml
+        parameters:
+          azureServiceConnection: sc-tf-apply-test
+          planArtifactName: $(planArtifactName)
+
+  - job: Plan_PROD
+    displayName: Re-plan PROD request after merge
+    dependsOn: Discover
+    pool:
+      vmImage: ubuntu-24.04
+    strategy:
+      maxParallel: 1
+      matrix: $[ dependencies.Discover.outputs['discover.prodMatrix'] ]
+    condition: and(succeeded(), eq(variables['enabled'], 'true'))
+    steps:
+      - template: /enterprise-cicd/azure-devops/templates/terraform/request-plan.yml
+        parameters:
+          requestPath: $(requestPath)
+          azureServiceConnection: sc-tf-plan-prod
+          tfstateStorageAccount: $(TFSTATE_STORAGE_ACCOUNT)
+          tfstateResourceGroup: $(TFSTATE_RESOURCE_GROUP)
+          namePrefix: $(TF_NAME_PREFIX)
+          planArtifactName: $(planArtifactName)
+
+  - job: Apply_PROD
+    displayName: Apply PROD protected plan
+    dependsOn: [Discover, Plan_PROD]
+    pool:
+      vmImage: ubuntu-24.04
+    strategy:
+      maxParallel: 1
+      matrix: $[ dependencies.Discover.outputs['discover.prodMatrix'] ]
+    condition: and(succeeded(), eq(variables['enabled'], 'true'))
+    steps:
+      - template: /enterprise-cicd/azure-devops/templates/terraform/request-apply.yml
+        parameters:
+          azureServiceConnection: sc-tf-apply-prod
+          planArtifactName: $(planArtifactName)
