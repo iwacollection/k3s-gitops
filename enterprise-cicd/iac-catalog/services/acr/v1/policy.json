@@ -1,0 +1,15 @@
+{
+  "dev": {
+    "allowedSku": ["Standard"],
+    "requiresApproval": false
+  },
+  "test": {
+    "allowedSku": ["Standard", "Premium"],
+    "requiresApproval": false
+  },
+  "prod": {
+    "allowedSku": ["Premium"],
+    "requiresApproval": true,
+    "requirePublicNetworkDisabled": true
+  }
+}
