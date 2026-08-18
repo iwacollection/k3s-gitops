@@ -1,0 +1,9 @@
+{
+  "apiVersion": "platform.promotion/v1",
+  "kind": "VerificationPolicy",
+  "spec": {
+    "required": ["rollout-ready", "health-endpoint", "error-rate", "latency"],
+    "onFailure": "rollback",
+    "evidenceRequired": true
+  }
+}
