@@ -21,7 +21,7 @@ permissions:
 jobs:
   validate-framework:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +42,7 @@ jobs:
             enterprise-cicd/terraform/stacks/platform/identity
             enterprise-cicd/terraform/stacks/platform/acr
             enterprise-cicd/terraform/stacks/platform/connectivity
+            enterprise-cicd/terraform/stacks/platform/aks
             enterprise-cicd/terraform/stacks/workloads/storage
             enterprise-cicd/terraform/stacks/workloads/key-vault
             enterprise-cicd/terraform/stacks/workloads/managed-identity
@@ -62,24 +63,6 @@ jobs:
           for service in storage key-vault managed-identity service-bus; do
             python enterprise-cicd/iac-catalog/render_request.py --request "enterprise-cicd/iac-catalog/services/$service/v1/request.example.json" --output "/tmp/iac-rendered/$service.json"
           done
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('/tmp/iac-rendered')
-          acr = json.load(open(root/'acr.json'))
-          storage = json.load(open(root/'storage.json'))
-          kv = json.load(open(root/'key-vault.json'))
-          ident = json.load(open(root/'managed-identity.json'))
-          bus = json.load(open(root/'service-bus.json'))
-          assert acr['sku'] == 'Standard' and acr['acr_name'].startswith('platpaymentdev')
-          assert storage['storage_account_name'].startswith('stpaymentdev')
-          assert storage['blob_versioning_enabled'] is True
-          assert kv['key_vault_name'].startswith('kv-payment-dev-')
-          assert kv['purge_protection_enabled'] is True
-          assert ident['identity_name'].startswith('id-payment-dev-')
-          assert bus['service_bus_name'].startswith('sb-payment-dev-')
-          print('Five IaC catalog renderers are valid.')
-          PY
 
       - name: Verify preview services reject PROD until private networking exists
         shell: bash

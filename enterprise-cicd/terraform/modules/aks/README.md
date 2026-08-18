@@ -1,3 +1,3 @@
-# aks module
+# AKS Standard Module
 
-Reusable Terraform module boundary for AKS platform configuration. In the lab, the existing `k8s-test-cicd` cluster is reused; this module prepares the production pattern without creating a second cluster by default.
+Governed enterprise AKS baseline for future environment clusters. Defaults enforce Azure RBAC, disabled local accounts, OIDC, Workload Identity, Azure Policy, Key Vault CSI rotation and Standard load balancer. Existing lab AKS Automatic is reused and is not recreated by this PR.
