@@ -9,6 +9,7 @@ on:
       - 'enterprise-cicd/dependency-proxy/**'
       - 'enterprise-cicd/security/**'
       - 'enterprise-cicd/github-actions/reusable/**'
+      - 'enterprise-cicd/github-actions/policies/**'
       - 'enterprise-cicd/testing/contracts/validate_build_platform.py'
       - '.github/workflows/reusable-application-ci-v1.yml'
       - '.github/workflows/reusable-application-ci-matrix-v1.yml'
@@ -22,6 +23,8 @@ on:
       - 'enterprise-cicd/ci-scripts/**'
       - 'enterprise-cicd/dependency-proxy/**'
       - 'enterprise-cicd/security/**'
+      - 'enterprise-cicd/github-actions/reusable/**'
+      - 'enterprise-cicd/github-actions/policies/**'
       - 'enterprise-cicd/testing/contracts/validate_build_platform.py'
       - '.github/workflows/reusable-application-ci-v1.yml'
       - '.github/workflows/reusable-application-ci-matrix-v1.yml'
@@ -82,3 +85,11 @@ jobs:
           grep -F 'strategy:' "$matrix"
           grep -F 'matrix:' "$matrix"
           grep -F 'uses: ./.github/workflows/reusable-application-ci-v1.yml' "$matrix"
+
+      - name: Verify caller/reusable separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e enterprise-cicd/github-actions/reusable/application-ci.yml
+          grep -F 'mainBranchAllowedForProduction' enterprise-cicd/github-actions/policies/reusable-workflow-consumption.json
+          grep -F 'reusable-application-ci-v1.yml@PLATFORM_RELEASE_REF' enterprise-cicd/github-actions/policies/application-caller.example.yml
