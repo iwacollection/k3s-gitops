@@ -272,7 +272,7 @@ def postgresql_flexible_tfvars(request: dict[str, Any], parameters: dict[str, An
     env = request["spec"]["environment"]
     result.update({
         "postgresql_server_name": f"pg-{app}-{env}-{suffix(request)}"[:63].rstrip("-"),
-        "version": parameters["version"],
+        "postgresql_version": parameters["version"],
         "sku_name": parameters["sku"],
         "storage_mb": parameters["storageMb"],
         "storage_tier": parameters["storageTier"],

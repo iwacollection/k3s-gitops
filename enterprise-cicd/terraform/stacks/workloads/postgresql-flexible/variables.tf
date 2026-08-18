@@ -1,7 +1,7 @@
 variable "resource_group_name" { type = string }
 variable "location" { type = string }
 variable "postgresql_server_name" { type = string }
-variable "version" { type = string }
+variable "postgresql_version" { type = string }
 variable "sku_name" { type = string }
 variable "storage_mb" { type = number }
 variable "storage_tier" { type = string }

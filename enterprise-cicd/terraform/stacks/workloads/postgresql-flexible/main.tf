@@ -23,7 +23,7 @@ module "postgresql" {
   name                         = var.postgresql_server_name
   resource_group_name          = module.resource_group.name
   location                     = module.resource_group.location
-  version                      = var.version
+  postgresql_version           = var.postgresql_version
   sku_name                     = var.sku_name
   storage_mb                   = var.storage_mb
   storage_tier                 = var.storage_tier

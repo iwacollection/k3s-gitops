@@ -1,99 +1,53 @@
 # Azure Enterprise IaC + CI/CD Platform
 
-> Microsoft Azure 企业级 IaC（Infrastructure as Code，基础设施即代码）与 CI/CD（持续集成/持续交付）管理平台。
+> Microsoft Azure 企业级 IaC（Infrastructure as Code，基础设施即代码）+ CI/CD 平台控制面。
 >
-> 核心原则：**Platform owns implementation; developers submit intent.**
-> 平台团队维护 Terraform、Pipeline、Build Image、Policy 和发布策略；研发团队主要提交“我需要什么”的声明，而不是自己重新实现平台能力。
+> 核心原则：**Platform owns implementation; developers submit intent.** 平台团队维护 Terraform、Pipeline、Build Image、Policy、发布策略和权限边界；研发团队提交需求声明，不重复实现平台能力。
 
-## 1. 平台目标
+## 1. 当前开发位置
 
-本目录不是一个单项目的流水线示例，而是一套可持续扩展的 Azure Platform Engineering（平台工程）控制面。
-
-平台统一解决：
-
-- Azure 基础设施如何申请、审核、创建、变更和回收
-- Terraform Module、Root Stack、Remote State、Identity 和 RBAC 如何治理
-- Go / Python / Java / C++ 如何使用统一、版本化的编译环境
-- 内网依赖代理、缓存隔离、构建可重复性如何保证
-- 制品如何扫描、生成 SBOM、签名并形成 Provenance（构建来源证明）
-- DEV -> TEST -> PROD 如何使用同一个 Artifact Digest 晋级
-- AKS 如何通过 Flux GitOps Pull 模式部署，而不是让 CI 持有生产集群管理员权限
-- Azure DevOps 与 GitHub Actions 如何分工而不形成双写控制面
-- 审批、锁、回滚、验证、审计和可观测性如何形成完整闭环
-
-## 2. 当前实验环境与生产目标
-
-### 当前 Lab
-
-- Azure Subscription：单 Subscription 实验环境
-- AKS：`k8s-test-cicd`
-- Resource Group：`group-test`
-- AKS 模式：AKS Automatic / Standard
-- GitHub Repository：`iwacollection/k3s-gitops`
-- 当前控制面 PR：保持 Draft，先完成框架和自动验证，再显式开启真实 Azure Apply / Flux Bootstrap
-
-### 生产目标
-
-生产环境不把一个 Subscription / 一个 Identity / 一个 State 用到底，而是按照 Azure Landing Zone 思路拆分管理边界：
+企业平台 V1 当前位于：
 
 ```text
-Microsoft Entra Tenant
-|
-+-- Platform Landing Zone
-|   +-- Identity
-|   +-- Connectivity
-|   +-- Management / Observability
-|   +-- Shared CI/CD Services
-|
-+-- Application Landing Zones
-    +-- DEV Subscription
-    +-- TEST Subscription
-    +-- PROD Subscription
+Repository: iwacollection/k3s-gitops
+Branch:     design/azure-enterprise-control-plane-v1
+PR:         #5 (Draft)
 ```
 
-当前 Lab 用 Resource Group 模拟环境边界，但 Terraform、State、Identity、Pipeline Contract 从第一天就按未来多 Subscription 设计。
+`main` 仍是稳定基线。本文描述的是 Draft PR #5 中的控制面实现。
 
-## 3. 总体架构
+## 2. 总体工作流
 
 ```text
-                           Developer
-                               |
-             +-----------------+------------------+
-             |                 |                  |
-         IaC Request       Application Code    Release Request
-             |                 |                  |
-             v                 v                  v
-       IaC Service        CI Build Service    Release Service
-          Catalog            Catalog             Catalog
-             |                 |                  |
-             v                 v                  v
-      Schema / Policy     Standard Profile    Promotion Policy
-             |                 |                  |
-             v                 v                  v
-      Terraform Plan       Build / Test      Protected GitOps PR
-             |                 |                  |
-          Review            Security               v
-             |                 |              Git Desired State
-             v                 v                  |
-     Protected Apply          ACR                 v
-             |                 |                Flux
-             v                 |                  |
-            Azure             +---- Digest ------> AKS
+Developer
+   |
+   +-- Infrastructure Request
+   |       -> IaC Service Catalog
+   |       -> Schema / Defaults / Policy
+   |       -> Terraform Plan
+   |       -> Review
+   |       -> Protected Apply
+   |       -> Azure
+   |
+   +-- Application Code
+   |       -> CI Build Catalog
+   |       -> Test / Security
+   |       -> SBOM / Provenance / Sign
+   |       -> Immutable Digest
+   |       -> ACR
+   |
+   +-- Release Request
+           -> Promotion Policy
+           -> Protected GitOps PR
+           -> Flux
+           -> AKS
+           -> Verify
+           -> Approved Ledger or Rollback PR
 ```
 
-## 4. 三个 Service Catalog
+## 3. IaC 管理模型
 
-### 4.1 IaC Service Catalog
-
-**IaC Service Catalog（基础设施服务目录）**：平台把 Azure 资源做成标准产品。
-
-研发默认不直接写 Terraform `.tf`。正常流程只提交：
-
-```text
-enterprise-cicd/iac-requests/<environment>/<request>.json
-```
-
-每个标准资源模板由平台维护：
+研发默认**不直接写 `azurerm_*`**，只提交 `InfrastructureRequest`。平台维护标准产品目录：
 
 ```text
 iac-catalog/services/<service>/<version>/
@@ -101,75 +55,221 @@ iac-catalog/services/<service>/<version>/
 ├── request.schema.json
 ├── defaults.json
 ├── policy.json
-├── request.example.json
-└── README.md
+└── request.example.json
 ```
 
-职责：
+每个产品映射到平台维护的 Terraform Module 和 Root Stack。请求通过 Schema、环境 Policy、平台命名和网络/身份绑定后，才被编译成 `.auto.tfvars.json`。
 
-- `request.schema.json`：研发允许填写哪些字段
-- `defaults.json`：平台注入安全默认值
-- `policy.json`：环境、SKU、网络、容量等限制
-- `catalog.json`：映射到哪个 Terraform Module / Root Stack
-- Terraform Module：真正实现 Azure Resource
+### 当前 IaC Service Catalog
 
-标准链路：
+| Product | Lifecycle | 关键生产约束 |
+|---|---|---|
+| `acr/v1` | active | 受控 SKU、不可变 Artifact 目标 |
+| `storage/v1` | active | Shared Key 禁用、版本化/保留策略、生产复制策略 |
+| `managed-identity/v1` | active | Workload Identity 边界 |
+| `key-vault/v1` | active | Public Network Disabled、Private Endpoint、Private DNS、Purge Protection |
+| `service-bus/v1` | active | Premium-only Private Endpoint、Local Auth Disabled、Public Network Disabled |
+| `managed-redis/v1` | active | Azure Managed Redis、Encrypted、Access Keys Disabled、Private Endpoint/DNS |
+| `postgresql-flexible/v1` | preview | VNet Delegation、Private DNS、Entra-only；PROD 等待平台 DBA Entra Admin Binding |
+
+### Terraform State
+
+平台 Stack 按生命周期和 Blast Radius 独立 State。研发 Catalog Request 使用：
 
 ```text
-Developer Request
-    -> Schema Validate
-    -> Policy Validate
-    -> Render controlled tfvars
-    -> Terraform Plan
-    -> PR Review
-    -> Merge
-    -> Protected Apply
-    -> Azure
-    -> Verification
+catalog/{environment}/{service}/{request}.tfstate
 ```
 
-### 4.2 CI Build Service Catalog
+一个申请一个 State/Lock，不让多个业务资源互相覆盖或扩大变更半径。
 
-**Build Profile（标准构建配置模板）**：研发选择标准构建套餐，不自己复制几十套 Pipeline。
+### Plan / Apply 分权
 
-当前 V1：
+```text
+DEV   tf-plan-dev   / tf-apply-dev
+TEST  tf-plan-test  / tf-apply-test
+PROD  tf-plan-prod  / tf-apply-prod
+```
 
-| Language | Build Profile | Platform Build Image |
+使用 OIDC/WIF，禁止一个万能 Contributor Identity 管理所有环境，禁止 PR Pipeline 直接 Apply。
+
+## 4. Azure Network Foundation
+
+平台 Connectivity Stack 已具备：
+
+```text
+VNet / Subnet
+NSG
+Route Table / UDR
+NAT Gateway
+Private DNS + VNet Link
+Private Endpoint + DNS Zone Group
+RBAC Role Assignment
+```
+
+研发不填写原始 VNet/Subnet/DNS Resource ID。`contracts/environment-bindings.json` 将 `dev/test/prod` 映射到平台拥有的网络资源名字。
+
+标准网络槽位包括：
+
+```text
+snet-aks
+snet-private-endpoints
+snet-postgresql   # delegated to Microsoft.DBforPostgreSQL/flexibleServers
+```
+
+## 5. AKS Platform
+
+标准 AKS Module / Root Stack 已实现并通过 AzureRM 4.81 validate：
+
+- Standard tier
+- private cluster option
+- local account disabled
+- Azure RBAC
+- OIDC issuer
+- Workload Identity
+- Azure Policy
+- Azure CNI
+- Standard Load Balancer
+- Key Vault CSI secret rotation
+- system node pool autoscaling
+- ACR Pull RBAC via kubelet identity
+
+当前 Lab 继续复用已有 `k8s-test-cicd` AKS Automatic；Terraform 标准 AKS 模块不会自动替换现有实验集群。
+
+## 6. Data Platform
+
+### Azure Managed Redis
+
+标准产品使用 `azurerm_managed_redis`，默认关闭公共网络，通过 Private Endpoint 接入，并关闭 Access Key Authentication、强制 Encrypted client protocol。生产策略要求 HA 和受控 SKU。
+
+### PostgreSQL Flexible Server
+
+标准产品使用 VNet-integrated Flexible Server：
+
+- Delegated Subnet
+- Private DNS
+- Public Network Disabled
+- System Assigned Identity
+- Microsoft Entra Authentication Enabled
+- Password Authentication Disabled
+- Backup/HA 由环境 Policy 约束
+
+当前 V1 的 DEV/TEST 模板可用；PROD 明确阻断，直到平台级 DBA Entra Administrator Binding 被配置，而不是让研发自己填管理员账号。
+
+## 7. Observability Platform
+
+`platform/observability` Root Stack 已建立：
+
+- Log Analytics Workspace
+- Azure Monitor Workspace（Managed Prometheus 基础）
+- Local Auth Disabled
+- Retention / Quota 受控
+
+后续 AKS Monitor/Managed Prometheus 关联和 Managed Grafana 属于平台集成层，而不是每个应用自行创建。
+
+## 8. CI Build Platform
+
+CI 使用 GitHub Actions Reusable Workflow。单应用内部使用 `needs` DAG，Monorepo/多应用使用外层 `matrix`。
+
+```text
+resolve
+  -> source-scan + build-test
+  -> image-build
+  -> image-scan + SBOM
+  -> sign
+  -> release-evidence
+```
+
+当前标准 Build Profile：
+
+| Language | Profile | Build Image |
 |---|---|---|
 | Java | `java/springboot-maven-v1` | `java21-maven:v1` |
 | Python | `python/python-uv-v1` | `python-uv:v1` |
 | Go | `go/go-service-v1` | `go-builder:v1` |
 | C++ | `cpp/cmake-conan-v1` | `cpp-cmake-conan:v1` |
 
-所有 Profile 使用统一生命周期：
+统一生命周期：
 
 ```text
 prepare -> verify -> package
 ```
 
-研发通过 `application-definitions/` 声明应用、Owner、Build Profile、Artifact、Dockerfile 和默认 Release Profile。
+CI 只负责产生可信制品，不持有 Terraform Apply 或生产 AKS 写权限。
 
-平台负责：编译器/SDK 版本、Dependency Proxy、Cache、测试、安全扫描、SBOM、BuildKit Provenance、Cosign Signing 和 Artifact Digest。
+## 9. Dependency / Cache
 
-### 4.3 Release / CD Service Catalog
+平台统一 Maven / PyPI / Go Proxy / Conan Remote 策略。Cache Key 必须绑定 Lock File、Build Profile、Build Image Version 和 Architecture，避免多项目共享可写缓存导致污染、ABI 不一致和并发损坏。
 
-CD 不重新 Build：**Build Once, Promote Same Digest**。
+## 10. Artifact 与供应链安全
 
-当前发布策略：
+```text
+Source Commit
+ -> Build Profile
+ -> Build Image Version
+ -> Tests
+ -> Source/Container Scan
+ -> SBOM
+ -> BuildKit Provenance
+ -> Cosign Signature
+ -> ACR sha256 Digest
+```
 
-- `rolling/rolling-v1`
-- `canary/canary-v1`
-- `blue-green/blue-green-v1`
+遵守 **Build Once, Promote Same Digest**。DEV/TEST/PROD 使用同一 Digest，不允许生产重新 Build。
 
-Release Request 只声明 Application、Artifact Repository、Artifact Digest、From/To Environment、Release Profile 和 Change Reason。
+## 11. CD / GitOps
 
-平台决定环境跳转、PROD 审批、Rollout Strategy、Verification 和 Rollback。
+CI 到 ACR 即停止。Release Request 驱动环境晋级：
 
-## 5. IaC 管理模型
+```text
+Artifact Digest
+ -> Release Request
+ -> Promotion Policy
+ -> GitOps Desired State PR
+ -> Flux
+ -> AKS
+ -> Read-only Observation
+ -> Verification
+ -> Approved Ledger / Rollback PR
+```
 
-### 5.1 Terraform Module 与 Root Stack
+环境只允许：
 
-**Module（模块）**：可复用基础设施实现。**Root Stack（根资源栈）**：真正对应独立 State / 权限 / 生命周期的部署单元。
+```text
+build -> dev -> test -> prod
+```
+
+`rolling-v1` 已 execution-ready。Canary/Blue-Green 只保留 Catalog，直到真实 progressive-delivery controller 接入前不会伪装成可执行策略。
+
+Rollback 使用 last approved digest，不重新 Build。
+
+## 12. Azure DevOps IaC Governance
+
+Azure DevOps 负责 Terraform / Environment Governance：
+
+- Request discovery
+- PR Terraform Plan
+- Plan Evidence
+- Merge-time re-plan
+- Exact saved-plan Apply
+- 固定 DEV/TEST/PROD Plan/Apply Service Connection
+- Required Template
+- Branch Control
+- Approval
+- Exclusive Lock
+
+Service Connection 不使用运行时变量动态拼接，避免授权边界在 Pipeline 执行时漂移。
+
+## 13. GitHub Actions 与 Azure DevOps 分工
+
+```text
+GitHub Actions -> Application CI
+Azure DevOps   -> IaC / Environment Governance
+Flux           -> Kubernetes write/reconciliation plane
+```
+
+同一职责只保留一个最终写控制面，禁止 GitHub Actions 与 Azure DevOps 同时直接修改 PROD AKS。
+
+## 14. Terraform 工程结构
 
 ```text
 terraform/
@@ -180,290 +280,82 @@ terraform/
 │   ├── managed-identity/
 │   ├── acr/
 │   ├── network/
+│   ├── network-security-group/
+│   ├── route-table/
+│   ├── nat-gateway/
+│   ├── private-dns/
+│   ├── private-endpoint/
+│   ├── role-assignment/
 │   ├── aks/
-│   └── workload-base/
+│   ├── storage-account/
+│   ├── key-vault/
+│   ├── service-bus/
+│   ├── managed-redis/
+│   ├── postgresql-flexible/
+│   └── observability/
 └── stacks/
     ├── platform/
-    │   ├── governance/
-    │   ├── connectivity/
     │   ├── identity/
     │   ├── acr/
-    │   └── aks/
+    │   ├── connectivity/
+    │   ├── aks/
+    │   └── observability/
     └── workloads/
-        ├── dev/
-        ├── test/
-        └── prod/
+        ├── storage/
+        ├── key-vault/
+        ├── managed-identity/
+        ├── service-bus/
+        ├── managed-redis/
+        └── postgresql-flexible/
 ```
 
-### 5.2 Terraform State
+## 15. 自动验证
 
-State 不能进 Git，也不能所有资源共用一个巨大 State。
+平台代码自己必须通过治理测试，而不是等第一个研发项目踩坑：
 
-平台 Stack 示例：`platform/identity.tfstate`、`platform/connectivity.tfstate`、`platform/aks.tfstate`。
+- Control Contract Validate
+- Framework Structure Validate
+- Platform Catalog Validate
+- Terraform Framework Validate
+- Build Platform Validate
+- Build Profile Smoke
+- GitOps Platform Validate
+- Azure DevOps Platform Validate
+- CD Closure Validate
 
-Catalog Request 使用更细粒度 State：
+Terraform Root Stack 验证已经改为 **Matrix 并行**，当前 11 个 Root Stack 可同时 `init -backend=false + validate`，避免第一个失败阻断其余问题发现。
+
+验证 Workflow 明确禁止执行 `terraform apply`，Flux Bootstrap 和真实 Azure 资源创建也保持显式受保护操作。
+
+## 16. 研发日常入口
+
+基础设施：
 
 ```text
-catalog/dev/acr/payment-acr.tfstate
-catalog/test/redis/payment-redis.tfstate
-catalog/prod/database/order-db.tfstate
+Infrastructure Request -> Plan -> Review -> Protected Apply
 ```
 
-拆分依据：Owner、生命周期、权限边界和 Blast Radius（故障/变更影响范围）。
-
-### 5.3 Plan / Apply 分权
+代码：
 
 ```text
-DEV   tf-plan-dev   / tf-apply-dev
-TEST  tf-plan-test  / tf-apply-test
-PROD  tf-plan-prod  / tf-apply-prod
+Application Definition -> Standard Reusable CI -> Immutable Artifact
 ```
 
-禁止一个万能 Contributor Identity 管 DEV/TEST/PROD、长期 Client Secret、研发个人账号执行生产 Apply、PR Pipeline 直接 Apply。优先 OIDC / WIF（Workload Identity Federation，工作负载身份联合）。
-
-## 6. CI 管理模型
+发布：
 
 ```text
-Checkout
- -> Resolve Application Definition
- -> Resolve Build Profile
- -> Dependency Proxy / Cache
- -> Source Security Scan
- -> Platform Build Image
- -> prepare / verify / package
- -> Build Container
- -> SBOM + Provenance
- -> Push ACR
- -> Container Scan
- -> Cosign Sign
- -> Resolve sha256 Digest
- -> Release Evidence
+Release Request -> Promotion -> GitOps -> Flux -> Verify -> Evidence/Rollback
 ```
 
-CI 明确禁止 `kubectl apply`、生产 `helm upgrade`、获取 PROD AKS Admin kubeconfig、`terraform apply` 和使用 `latest` 作为发布身份。
+研发不需要分别学习怎么实现 Azure Provider Resource、GitHub Pipeline、Azure DevOps Apply 和生产 `kubectl`；这些属于平台维护能力。
 
-## 7. Dependency Proxy 与 Cache
+## 17. V1 剩余收口重点
 
-- Dependency Proxy：共享只读依赖源，例如 Maven / PyPI / Go Proxy / Conan Remote。
-- Job Workspace：每个 Job 独立，不能多个构建共享可写源码目录。
-- Dependency Cache：Key 绑定 Lock File、Build Profile、Build Image Version、Architecture 等输入。
+- PostgreSQL PROD Entra DBA Binding
+- AKS 与 Log Analytics / Managed Prometheus 的标准关联
+- Managed Grafana（可选）
+- Diagnostic Settings / Resource Locks / 更细 Policy Baseline
+- 将版本化 Platform Build Images 正式发布到 ACR
+- 用现有 Lab AKS 跑通第一条受控 DEV Promotion + Observation
 
-避免缓存污染、ABI 不一致、并发写损坏、不同编译器共用 C++ Cache、依赖版本漂移。
-
-## 8. Artifact 与软件供应链安全
-
-```text
-Source Commit
- -> Build Profile
- -> Build Image Version
- -> Tests
- -> Security Evidence
- -> SBOM
- -> Provenance
- -> Signature
- -> ACR Digest
-```
-
-环境晋级使用 `acr.example/payment-api@sha256:...`，不依赖可变 `latest` Tag。
-
-## 9. CD / GitOps 管理模型
-
-### 9.1 Pull-based GitOps
-
-目标模型：
-
-```text
-CI -> ACR -> Release Request -> Protected GitOps PR
-                                |
-                                v
-                         Git Desired State
-                                |
-                                v
-                         Flux in AKS
-                                |
-                                v
-                           Reconcile
-```
-
-Flux 是 Pull-based GitOps Controller（拉取式 GitOps 控制器）：集群主动读取 Git Desired State，不要求普通 Build Runner 持有 AKS Admin 权限。
-
-### 9.2 环境晋级
-
-只允许 `build -> dev -> test -> prod`，同一个 Digest 从 DEV 一直晋级到 PROD，不允许默认 `build -> prod`。
-
-### 9.3 Rollback
-
-Rollback 使用 previously-approved digest（之前审核通过的制品摘要），不重新 Build。
-
-## 10. GitHub Actions / Azure DevOps / Flux 分工
-
-### GitHub Actions
-
-Application CI：Build Profile、Test、Security Gate、Container Build、SBOM/Signing/Provenance、Push ACR、Release Evidence。
-
-### Azure DevOps
-
-IaC / Environment Governance：Terraform Request Plan/Apply、Service Connection、Protected Environment、Approval、Branch Control、Required Template、Exclusive Lock。
-
-### Flux
-
-Kubernetes 实际 CD：Pull Git Desired State、Reconcile AKS、Drift Correction、Kustomize/Helm Controller。
-
-原则：同一职责只有一个最终写控制面，避免 GitHub Actions 与 Azure DevOps 同时直接修改 PROD AKS。
-
-## 11. DEV / TEST / PROD 治理
-
-```text
-DEV
-- 快速反馈
-- Schema / Policy
-- 自动验证
-
-TEST
-- 集成验证
-- 安全门禁
-- 与 PROD 尽量同构
-
-PROD
-- Protected Environment
-- Required Reviewer
-- Branch Control
-- Required Template
-- Exclusive Lock
-- Same Digest Promotion
-- Verification
-- Rollback Evidence
-```
-
-## 12. 研发日常工作方式
-
-### 12.1 申请 Azure 资源
-
-提交 `iac-requests/dev/payment-redis.json`：
-
-```text
-PR -> Schema -> Policy -> Terraform Plan -> Review -> Merge -> Protected Apply
-```
-
-研发不需要手写 `azurerm_*`。
-
-### 12.2 新应用接入 CI
-
-提交 `application-definitions/payment-api.json` 并选择 `buildProfile`，统一 Reusable Workflow 执行 Build Platform。
-
-### 12.3 发布应用
-
-选择 CI 已生成的 Artifact Digest，提交 `release-requests/<app>-to-<env>.json`：
-
-```text
-Release Validate
- -> Promotion Policy
- -> GitOps PR
- -> Review / Approval
- -> Merge
- -> Flux Reconcile
- -> Verification
- -> Evidence
-```
-
-## 13. 平台团队工作方式
-
-平台升级标准版本而不是要求每个项目自己升级：Build Image v1 -> v2、Terraform Template v1 -> v2、Release Profile v1 -> v2。升级必须经过 PR Review、Contract Validation、Golden Fixture 和迁移说明。
-
-Catalog 不支持的新需求走：Developer Requirement -> Platform Review -> Module/Profile Enhancement -> New Version -> Golden Test -> Developer 选择新版本。
-
-## 14. 自动化验证
-
-当前/目标控制面持续执行：
-
-- `Control Contract Validate`
-- `Framework Structure Validate`
-- `Terraform Framework Validate`
-- `Platform Catalog Validate`
-- `Build Platform Validate`
-- `Build Profile Smoke`
-- `GitOps Platform Validate`
-
-Golden Fixture 会真实构建 Java / Python / Go / C++ 最小项目，防止平台 Profile 只“JSON 看起来正确”但真正编译失败。
-
-## 15. 目录总览
-
-```text
-enterprise-cicd/
-├── architecture/               # 总体架构设计
-├── contracts/                  # Environment / State / Identity / Repo 契约
-├── iac-catalog/                # 标准基础设施产品
-├── iac-requests/               # 研发基础设施申请
-├── terraform/                  # Module / Root Stack / State Renderer
-├── azure-devops/               # IaC / Environment Governance
-├── github-actions/             # Reusable CI / Promotion Workflow
-├── ci-catalog/                 # Java/Python/Go/C++ Build Profile
-├── application-definitions/    # 应用声明
-├── ci-scripts/                 # 平台构建辅助逻辑
-├── build-images/               # 版本化构建镜像
-├── dependency-proxy/           # Maven/PyPI/Go/Conan 代理策略
-├── artifacts/                  # ACR / Package / Promotion 契约
-├── release-catalog/            # Rolling/Canary/Blue-Green
-├── release-requests/           # 发布/晋级申请
-├── promotion/                  # 晋级/验证/回滚策略
-├── gitops/                     # Flux Desired State
-├── security/                   # Policy/Scan/SBOM/Signing/RBAC
-├── observability/              # Pipeline/Deployment/Platform Metrics
-├── testing/                    # Contract/Integration/E2E/Golden Fixture
-├── operations/runbooks/        # 故障处理与恢复手册
-└── docs/                       # ADR/Standard/Onboarding
-```
-
-## 16. 安全硬规则
-
-1. 禁止生产长期 Client Secret；优先 OIDC/WIF。
-2. CI Identity 不拥有 PROD AKS Admin 权限。
-3. Terraform Plan 与 Apply Identity 分离。
-4. PROD Approval / Lock 不能只依赖业务 YAML 自己声明。
-5. Artifact 必须使用不可变 Digest 晋级。
-6. PROD 不重新 Build。
-7. Terraform State 禁止提交 Git。
-8. Catalog 外能力必须走平台例外/模板升级流程。
-9. Build Workspace 不共享可写目录。
-10. Release Rollback 使用已批准旧 Digest，不重新构建。
-
-## 17. 当前实施状态
-
-```text
-Control Plane Architecture        DONE
-Repo / State / Identity Contract  DONE
-Terraform Module Framework        IN PROGRESS
-IaC Service Catalog V1            IN PROGRESS (ACR first real product)
-Build Platform V1                 DONE
-Java/Python/Go/C++ Golden Smoke   DONE
-Release Catalog V1                DONE
-GitOps / Flux Execution           IN PROGRESS
-Azure DevOps Protected Runtime    IN PROGRESS
-Real Azure Apply                  NOT ENABLED BY DEFAULT
-Real PROD Delivery                NOT ENABLED BY DEFAULT
-```
-
-## 18. 下一阶段
-
-1. 完成 GitOps / Flux Execution Contract
-2. Release Request 自动生成 Protected GitOps PR
-3. DEV/TEST/PROD Overlay 与 Flux Kustomization
-4. Deployment Verification / Rollback Evidence
-5. Azure DevOps Request Plan/Apply Wrapper
-6. 显式授权后发布 Platform Build Images 到 ACR
-7. 用现有 AKS Automatic 跑第一条真实 DEV GitOps Release
-8. 扩展 Redis / Storage / Key Vault / Database 等 IaC Catalog 产品
-
----
-
-平台最终目标是一条可治理的 Paved Road（标准铺装路径）：
-
-```text
-研发声明需求
- -> 平台标准化执行
- -> 机器自动校验
- -> 人审核真实变化
- -> 受控创建/发布
- -> 自动验证
- -> 可审计回滚
-```
+在这些受保护控制面完成前，PR #5 保持 Draft，不自动创建额外 AKS 或生产资源。
