@@ -51,12 +51,16 @@ def main() -> int:
         fail(errors, "Terraform plan identity must not have state write access")
     if state_rules.get("apply_write_access") is not True:
         fail(errors, "Terraform apply identity must have state write access")
+    if state_rules.get("catalog_request_state_isolated") is not True:
+        fail(errors, "catalog requests must use isolated Terraform state")
 
     keys = list(state.get("platform_keys", {}).values())
     if len(keys) != len(set(keys)):
         fail(errors, "platform Terraform state keys must be unique")
     if not state.get("workload_key_pattern", "").startswith("workload/{environment}/"):
         fail(errors, "workload state keys must be environment-scoped")
+    if state.get("catalog_key_pattern") != "catalog/{environment}/{service}/{request}.tfstate":
+        fail(errors, "catalog request state keys must isolate environment/service/request")
 
     auth = identity.get("authentication", {})
     if auth.get("target") != "workload-identity-federation":
@@ -106,7 +110,7 @@ def main() -> int:
 
     print("CONTROL CONTRACT VALIDATION: PASSED")
     print("environments: dev -> test -> prod")
-    print("state: isolated by stack/environment")
+    print("state: isolated by stack/environment/catalog-request")
     print("identity: WIF + plan/apply separation")
     print("repository: trunk-based + ownership boundaries")
     return 0
