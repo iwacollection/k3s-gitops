@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Platform Application Definition",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {"const": "platform.ci/v1"},
+    "kind": {"const": "Application"},
+    "metadata": {
+      "type": "object",
+      "required": ["name", "owner"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "owner": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["buildProfile", "artifact", "deployment"],
+      "properties": {
+        "buildProfile": {"type": "string"},
+        "artifact": {
+          "type": "object",
+          "required": ["type", "repository"],
+          "properties": {
+            "type": {"enum": ["container", "package", "binary"]},
+            "repository": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "deployment": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {"enum": ["kubernetes", "none"]},
+            "releaseProfile": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
