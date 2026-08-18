@@ -73,4 +73,4 @@ jobs:
             -v "$CACHE:/platform-cache" \
             -w /workspace \
             "platform-fixture/$IMAGE:test" \
-            sh -lc "$PREPARE && $VERIFY && $PACKAGE"
+            sh -c "$PREPARE && $VERIFY && $PACKAGE"

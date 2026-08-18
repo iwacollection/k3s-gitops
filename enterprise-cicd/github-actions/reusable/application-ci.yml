@@ -137,7 +137,7 @@ jobs:
             -v "/tmp/platform-config:/platform-config:ro" \
             -w /workspace \
             "$IMAGE" \
-            sh -lc "$PRE_COMMAND && $PREPARE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
+            sh -c "$PRE_COMMAND && $PREPARE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
 
       - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
