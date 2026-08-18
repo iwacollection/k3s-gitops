@@ -1,0 +1,47 @@
+name: enterprise-ci-reusable
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: go | python | java | cpp
+        required: true
+        type: string
+      build_command:
+        description: Repository-owned build command
+        required: true
+        type: string
+      working_directory:
+        required: false
+        default: .
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate language
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.language }}" in
+            go|python|java|cpp) ;;
+            *) echo "unsupported language: ${{ inputs.language }}" >&2; exit 2 ;;
+          esac
+
+  build:
+    needs: validate-contract
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute repository build contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ inputs.build_command }}
