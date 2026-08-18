@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REPO = ROOT.parent
 DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
+DIGEST_C = "sha256:" + "c" * 64
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -79,21 +80,22 @@ def main() -> None:
         assert ledger["spec"]["current"]["artifactDigest"] == DIGEST_B
         assert ledger["spec"]["previousApproved"]["artifactDigest"] == DIGEST_A
 
-        failed = tmpdir / "failed.json"
-        failed_result = tmpdir / "failed-result.json"
-        write_json(failed, observation(DIGEST_B, rollout=False))
+        failed = tmpdir / "failed-c.json"
+        failed_result = tmpdir / "failed-c-result.json"
+        write_json(failed, observation(DIGEST_C, rollout=False))
         run("python", "enterprise-cicd/promotion/verification/evaluate.py", "--observation", str(failed), "--output", str(failed_result), expected=2)
         run("python", "enterprise-cicd/promotion/render_rollback.py", "--application", "go-smoke", "--environment", "dev", "--verification-result", str(failed_result), "--gitops-root", str(gitops))
 
         overlay = (gitops / "environments" / "dev" / "apps" / "go-smoke" / "kustomization.yaml").read_text(encoding="utf-8")
-        assert f"digest: {DIGEST_A}" in overlay
+        assert f"digest: {DIGEST_B}" in overlay
         rollback = json.loads((gitops / "environments" / "dev" / "apps" / "go-smoke" / "rollback-evidence.json").read_text(encoding="utf-8"))
-        assert rollback["spec"]["failedDigest"] == DIGEST_B
-        assert rollback["spec"]["rollbackDigest"] == DIGEST_A
+        assert rollback["spec"]["failedDigest"] == DIGEST_C
+        assert rollback["spec"]["rollbackDigest"] == DIGEST_B
+        assert rollback["spec"]["rollbackBaseline"] == "last-approved-before-candidate"
         assert rollback["spec"]["rebuild"] is False
 
     print("CD CLOSURE VALIDATION: PASSED")
-    print("pass -> approved ledger -> next pass -> previousApproved -> failed verification -> rollback previous digest")
+    print("A pass -> B pass -> C fails verification -> rollback to B (last approved before candidate)")
 
 
 if __name__ == "__main__":
