@@ -3,6 +3,7 @@
   "kind": "ReleaseProfile",
   "metadata": {"name": "rolling-v1", "strategy": "rolling", "version": "v1"},
   "spec": {
+    "execution": {"ready": true, "engine": "kubernetes-deployment"},
     "requires": ["signed-artifact", "sbom", "health-check"],
     "steps": ["update-gitops-digest", "wait-ready", "verify-health"],
     "rollback": {"automaticOnHealthFailure": true, "target": "previous-approved-digest"}
