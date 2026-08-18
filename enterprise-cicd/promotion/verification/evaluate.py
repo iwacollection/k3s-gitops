@@ -5,8 +5,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 def load(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -34,6 +32,8 @@ def main() -> None:
     required = set(env_policy["required"])
     if "flux-ready" in required:
         check("flux-ready", spec["fluxReady"] is True, spec["fluxReady"], True)
+    if "artifact-identity" in required:
+        check("artifact-identity", spec["artifactIdentityReady"] is True, spec["artifactIdentityReady"], True)
     if "rollout-ready" in required:
         check("rollout-ready", spec["rolloutReady"] is True, spec["rolloutReady"], True)
     if "health-endpoint" in required:
