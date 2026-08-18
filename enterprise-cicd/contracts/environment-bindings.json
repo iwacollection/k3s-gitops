@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "environments": {
     "dev": {
       "network": {
@@ -13,6 +13,18 @@
           "service-bus": "privatelink.servicebus.windows.net",
           "managed-redis": "privatelink.redis.azure.net",
           "postgresql-flexible": "platform-dev.postgres.database.azure.com"
+        }
+      },
+      "observability": {
+        "resourceGroup": "rg-platform-observability-dev",
+        "logAnalyticsWorkspace": "law-platform-dev",
+        "azureMonitorWorkspace": "amw-platform-dev"
+      },
+      "identities": {
+        "postgresqlDba": {
+          "objectId": null,
+          "principalName": null,
+          "principalType": "Group"
         }
       }
     },
@@ -29,6 +41,18 @@
           "managed-redis": "privatelink.redis.azure.net",
           "postgresql-flexible": "platform-test.postgres.database.azure.com"
         }
+      },
+      "observability": {
+        "resourceGroup": "rg-platform-observability-test",
+        "logAnalyticsWorkspace": "law-platform-test",
+        "azureMonitorWorkspace": "amw-platform-test"
+      },
+      "identities": {
+        "postgresqlDba": {
+          "objectId": null,
+          "principalName": null,
+          "principalType": "Group"
+        }
       }
     },
     "prod": {
@@ -43,6 +67,18 @@
           "service-bus": "privatelink.servicebus.windows.net",
           "managed-redis": "privatelink.redis.azure.net",
           "postgresql-flexible": "platform-prod.postgres.database.azure.com"
+        }
+      },
+      "observability": {
+        "resourceGroup": "rg-platform-observability-prod",
+        "logAnalyticsWorkspace": "law-platform-prod",
+        "azureMonitorWorkspace": "amw-platform-prod"
+      },
+      "identities": {
+        "postgresqlDba": {
+          "objectId": null,
+          "principalName": null,
+          "principalType": "Group"
         }
       }
     }

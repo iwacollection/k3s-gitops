@@ -1,3 +1,21 @@
+locals {
+  environment             = lookup(var.tags, "environment", "dev")
+  bindings                = jsondecode(file("${path.root}/../../../../contracts/environment-bindings.json"))
+  postgresql_dba_binding  = local.bindings.environments[local.environment].identities.postgresqlDba
+  prod_dba_binding_ready  = local.environment != "prod" || (try(local.postgresql_dba_binding.objectId, null) != null && try(local.postgresql_dba_binding.principalName, null) != null)
+}
+
+resource "terraform_data" "governance" {
+  input = local.environment
+
+  lifecycle {
+    precondition {
+      condition     = local.prod_dba_binding_ready
+      error_message = "PROD PostgreSQL is blocked until environments.prod.identities.postgresqlDba.objectId and principalName are configured in environment-bindings.json."
+    }
+  }
+}
+
 data "azurerm_subnet" "postgres" {
   name                 = var.delegated_subnet_name
   virtual_network_name = var.virtual_network_name
@@ -33,10 +51,12 @@ module "postgresql" {
   geo_redundant_backup_enabled = var.geo_redundant_backup_enabled
   auto_grow_enabled            = var.auto_grow_enabled
   high_availability_mode       = var.high_availability_mode
-  entra_admin_object_id        = var.entra_admin_object_id
-  entra_admin_principal_name   = var.entra_admin_principal_name
-  entra_admin_principal_type   = var.entra_admin_principal_type
+  entra_admin_object_id        = try(local.postgresql_dba_binding.objectId, null)
+  entra_admin_principal_name   = try(local.postgresql_dba_binding.principalName, null)
+  entra_admin_principal_type   = try(local.postgresql_dba_binding.principalType, "Group")
   tags                         = var.tags
+
+  depends_on = [terraform_data.governance]
 }
 
 module "resource_lock" {

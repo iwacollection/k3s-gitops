@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "services": {
+    "storage-blob": {
+      "resourceType": "Microsoft.Storage/storageAccounts/blobServices",
+      "logCategories": ["StorageRead", "StorageWrite", "StorageDelete"],
+      "logCategoryGroups": [],
+      "metricCategories": ["AllMetrics"]
+    },
+    "key-vault": {
+      "resourceType": "Microsoft.KeyVault/vaults",
+      "logCategories": ["AuditEvent", "AzurePolicyEvaluationDetails"],
+      "logCategoryGroups": [],
+      "metricCategories": ["AllMetrics"]
+    },
+    "service-bus": {
+      "resourceType": "Microsoft.ServiceBus/namespaces",
+      "logCategories": ["OperationalLogs", "RuntimeAuditLogs", "DiagnosticErrorLogs", "VNetAndIPFilteringLogs", "DataDRLogs"],
+      "logCategoryGroups": [],
+      "metricCategories": ["AllMetrics"]
+    },
+    "managed-redis-database": {
+      "resourceType": "Microsoft.Cache/redisEnterprise/databases",
+      "logCategories": ["ConnectionEvents"],
+      "logCategoryGroups": [],
+      "metricCategories": []
+    }
+  }
+}

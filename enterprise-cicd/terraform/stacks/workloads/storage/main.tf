@@ -1,7 +1,11 @@
 locals {
   environment                 = lookup(var.tags, "environment", "dev")
-  network_resource_group_name = coalesce(var.network_resource_group_name, "rg-platform-network-${local.environment}")
-  virtual_network_name        = coalesce(var.virtual_network_name, "vnet-platform-${local.environment}")
+  bindings                    = jsondecode(file("${path.root}/../../../../contracts/environment-bindings.json"))
+  diagnostic_contracts        = jsondecode(file("${path.root}/../../../../contracts/diagnostic-categories.json"))
+  environment_binding         = local.bindings.environments[local.environment]
+  diagnostic_contract         = local.diagnostic_contracts.services["storage-blob"]
+  network_resource_group_name = coalesce(var.network_resource_group_name, local.environment_binding.network.resourceGroup)
+  virtual_network_name        = coalesce(var.virtual_network_name, local.environment_binding.network.virtualNetwork)
 }
 
 data "azurerm_subnet" "private_endpoint" {
@@ -13,6 +17,11 @@ data "azurerm_subnet" "private_endpoint" {
 data "azurerm_private_dns_zone" "storage" {
   name                = var.private_dns_zone_name
   resource_group_name = local.network_resource_group_name
+}
+
+data "azurerm_log_analytics_workspace" "platform" {
+  name                = local.environment_binding.observability.logAnalyticsWorkspace
+  resource_group_name = local.environment_binding.observability.resourceGroup
 }
 
 module "resource_group" {
@@ -49,6 +58,17 @@ module "private_endpoint" {
   subresource_names              = ["blob"]
   private_dns_zone_ids           = [data.azurerm_private_dns_zone.storage.id]
   tags                           = var.tags
+}
+
+module "diagnostic_setting" {
+  source = "../../../modules/diagnostic-setting"
+
+  name                       = "diag-${var.storage_account_name}-blob"
+  target_resource_id         = "${module.storage.id}/blobServices/default"
+  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.platform.id
+  log_categories             = toset(local.diagnostic_contract.logCategories)
+  log_category_groups        = toset(local.diagnostic_contract.logCategoryGroups)
+  metric_categories          = toset(local.diagnostic_contract.metricCategories)
 }
 
 module "resource_lock" {
