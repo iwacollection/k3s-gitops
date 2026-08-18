@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "environments": {
     "dev": {
       "network": {
@@ -21,6 +21,14 @@
         "azureMonitorWorkspace": "amw-platform-dev"
       },
       "identities": {
+        "githubOidc": {
+          "principalType": "UserAssignedManagedIdentity",
+          "clientId": "cfb1ddc1-fd3b-4709-b4b0-4cccebaa58ad",
+          "principalId": "03b8ba4a-9155-4e7b-add1-e4e1597df2c7",
+          "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+          "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+          "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/sub-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k8s-test-gruop-uami"
+        },
         "postgresqlDba": {
           "objectId": null,
           "principalName": null,
