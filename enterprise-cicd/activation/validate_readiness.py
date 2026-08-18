@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
+DEV_CLUSTER_BINDING = ROOT / "gitops" / "clusters" / "aks-automatic-lab" / "cluster.json"
 
 EXPECTED_ENVIRONMENTS = {"dev", "test", "prod"}
 EXPECTED_DIAGNOSTIC_SERVICES = {
@@ -92,6 +93,32 @@ def check_build_images(report: dict) -> None:
     report["buildImageContracts"] = "valid"
 
 
+def check_dev_cluster_binding(report: dict) -> None:
+    if not DEV_CLUSTER_BINDING.is_file():
+        raise SystemExit("DEV AKS cluster binding is missing")
+    binding = load_json(DEV_CLUSTER_BINDING)
+    if binding.get("kind") != "ClusterBinding" or binding.get("metadata", {}).get("environment") != "dev":
+        raise SystemExit("aks-automatic-lab must be a DEV ClusterBinding")
+    azure = binding.get("spec", {}).get("azure", {})
+    flux = binding.get("spec", {}).get("flux", {})
+    if not azure.get("resourceGroup") or not azure.get("clusterName"):
+        raise SystemExit("DEV ClusterBinding must contain Azure resourceGroup and clusterName")
+    if flux.get("branch") != "main":
+        raise SystemExit("DEV Flux binding must reconcile the protected main branch")
+    dev_kustomizations = [
+        item for item in flux.get("kustomizations", [])
+        if str(item.get("path", "")).endswith("/environments/dev")
+    ]
+    if not dev_kustomizations:
+        raise SystemExit("DEV ClusterBinding must include the DEV environment kustomization")
+    report["devClusterBinding"] = {
+        "name": binding["metadata"]["name"],
+        "resourceGroup": azure["resourceGroup"],
+        "clusterName": azure["clusterName"],
+        "fluxBranch": flux["branch"],
+    }
+
+
 def check_flux_only_write_plane(report: dict) -> None:
     violations: list[str] = []
     workflow_dir = REPO / ".github" / "workflows"
@@ -105,19 +132,29 @@ def check_flux_only_write_plane(report: dict) -> None:
         raise SystemExit("Direct Kubernetes write path detected outside explicit Flux bootstrap: " + "; ".join(violations))
 
     activation = workflow_dir / "azure-dev-smoke-deploy.yml"
-    if not activation.is_file():
-        raise SystemExit("GitOps-only DEV activation workflow is missing")
+    promotion = workflow_dir / "gitops-promotion.yml"
+    if not activation.is_file() or not promotion.is_file():
+        raise SystemExit("GitOps activation/promotion workflows are missing")
     activation_text = activation.read_text(encoding="utf-8")
+    promotion_text = promotion.read_text(encoding="utf-8")
     if "gitops-promotion.yml" not in activation_text or "reusable-cd-post-deploy-v1.yml" not in activation_text:
         raise SystemExit("DEV activation must route through GitOps promotion and post-deploy observation")
+    if "aks-automatic-lab/cluster.json" not in activation_text:
+        raise SystemExit("DEV activation must use the platform-owned LAB ClusterBinding")
+    if "*.example.json" not in activation_text or "*.example.json" not in promotion_text:
+        raise SystemExit("Real promotion workflows must explicitly reject example Release Requests")
     report["kubernetesWritePlane"] = "flux-only"
+    report["exampleReleasePromotion"] = "forbidden"
 
 
 def check_postgresql_policy(prod_dba_ready: bool, report: dict) -> None:
     policy = load_json(ROOT / "iac-catalog" / "services" / "postgresql-flexible" / "v1" / "policy.json")
-    prod_enabled = bool(policy.get("prod", {}).get("enabled"))
+    prod_policy = policy.get("prod", {})
+    prod_enabled = bool(prod_policy.get("enabled"))
     if not prod_dba_ready and prod_enabled:
         raise SystemExit("PostgreSQL PROD catalog cannot be enabled while the real Entra DBA binding is absent")
+    if not prod_enabled and not prod_policy.get("activationPolicy"):
+        raise SystemExit("Disabled PostgreSQL PROD policy must carry a predeclared activationPolicy")
     report["postgresqlProdCatalogEnabled"] = prod_enabled
     report["postgresqlProdActivationReady"] = prod_dba_ready and prod_enabled
 
@@ -132,6 +169,7 @@ def main() -> None:
     prod_dba_ready = check_environment_bindings(report)
     check_diagnostics(report)
     check_build_images(report)
+    check_dev_cluster_binding(report)
     check_flux_only_write_plane(report)
     check_postgresql_policy(prod_dba_ready, report)
 

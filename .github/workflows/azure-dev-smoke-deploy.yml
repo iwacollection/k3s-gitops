@@ -12,12 +12,7 @@ on:
           - promote
           - observe
       release_request:
-        description: Committed DEV Release Request under enterprise-cicd/release-requests/
-        required: true
-        default: enterprise-cicd/release-requests/go-smoke-to-dev.example.json
-        type: string
-      cluster_binding:
-        description: Governed AKS cluster binding used by the read-only observation workflow
+        description: Real committed DEV Release Request under enterprise-cicd/release-requests/; example files are forbidden
         required: true
         type: string
 
@@ -25,6 +20,9 @@ permissions:
   contents: write
   pull-requests: write
   id-token: write
+
+env:
+  DEV_CLUSTER_BINDING: enterprise-cicd/gitops/clusters/aks-automatic-lab/cluster.json
 
 jobs:
   resolve:
@@ -37,17 +35,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: request
-        name: Resolve and validate DEV release request
+        name: Resolve governed DEV target and real release request
         shell: bash
         env:
           REQUEST: ${{ inputs.release_request }}
         run: |
           set -euo pipefail
           case "$REQUEST" in
+            enterprise-cicd/release-requests/*.example.json)
+              echo "Example Release Requests are documentation fixtures and cannot be promoted." >&2
+              exit 1
+              ;;
             enterprise-cicd/release-requests/*.json) ;;
-            *) echo "Release request must be committed under enterprise-cicd/release-requests/." >&2; exit 1 ;;
+            *)
+              echo "Release request must be a committed JSON file under enterprise-cicd/release-requests/." >&2
+              exit 1
+              ;;
           esac
           test -f "$REQUEST"
+          test -f "$DEV_CLUSTER_BINDING"
+          test "$(jq -r .metadata.environment "$DEV_CLUSTER_BINDING")" = dev
+          test "$(jq -r .spec.flux.branch "$DEV_CLUSTER_BINDING")" = main
           test "$(jq -r .spec.to "$REQUEST")" = dev
           DIGEST="$(jq -r .spec.artifactDigest "$REQUEST")"
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -55,6 +63,13 @@ jobs:
           echo "environment=dev" >> "$GITHUB_OUTPUT"
           echo "artifact_repository=$(jq -r .spec.artifactRepository "$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "artifact_digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          {
+            echo '## DEV GitOps activation target'
+            echo "- Cluster binding: \`$DEV_CLUSTER_BINDING\`"
+            echo "- AKS: \`$(jq -r .spec.azure.clusterName "$DEV_CLUSTER_BINDING")\`"
+            echo "- Release: \`$REQUEST\`"
+            echo "- Digest: \`$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   promote:
     if: ${{ inputs.phase == 'promote' }}
@@ -68,7 +83,7 @@ jobs:
     needs: resolve
     uses: ./.github/workflows/reusable-cd-post-deploy-v1.yml
     with:
-      cluster_binding: ${{ inputs.cluster_binding }}
+      cluster_binding: enterprise-cicd/gitops/clusters/aks-automatic-lab/cluster.json
       application: ${{ needs.resolve.outputs.application }}
       environment: ${{ needs.resolve.outputs.environment }}
       artifact_repository: ${{ needs.resolve.outputs.artifact_repository }}

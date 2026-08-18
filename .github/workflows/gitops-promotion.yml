@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_request:
-        description: Committed release request under enterprise-cicd/release-requests/
+        description: Real committed release request under enterprise-cicd/release-requests/; example files are forbidden
         required: true
         type: string
   workflow_call:
@@ -31,13 +31,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate request path
+      - name: Validate real release request path
         shell: bash
         env:
           REQUEST: ${{ inputs.release_request }}
         run: |
           set -euo pipefail
           case "$REQUEST" in
+            enterprise-cicd/release-requests/*.example.json)
+              echo "Example Release Requests are documentation fixtures and cannot be promoted." >&2
+              exit 1
+              ;;
             enterprise-cicd/release-requests/*.json) ;;
             *)
               echo "Release request must be a committed JSON file under enterprise-cicd/release-requests/." >&2
@@ -45,6 +49,8 @@ jobs:
               ;;
           esac
           [[ -f "$REQUEST" ]]
+          DIGEST="$(jq -r .spec.artifactDigest "$REQUEST")"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
 
       - name: Render governed GitOps desired state
         id: render
