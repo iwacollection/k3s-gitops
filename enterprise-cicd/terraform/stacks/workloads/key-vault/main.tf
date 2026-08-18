@@ -1,5 +1,3 @@
-data "azurerm_client_config" "current" {}
-
 data "azurerm_subnet" "private_endpoint" {
   name                 = var.private_endpoint_subnet_name
   virtual_network_name = var.virtual_network_name

@@ -20,44 +20,53 @@ permissions:
   contents: read
 
 jobs:
-  validate-framework:
+  fmt:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.15.8'
-
       - name: Terraform format check
         run: terraform fmt -check -recursive enterprise-cicd/terraform
 
-      - name: Validate governed root stacks
+  validate-stacks:
+    needs: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        stack:
+          - enterprise-cicd/terraform/stacks/platform/identity
+          - enterprise-cicd/terraform/stacks/platform/acr
+          - enterprise-cicd/terraform/stacks/platform/connectivity
+          - enterprise-cicd/terraform/stacks/platform/aks
+          - enterprise-cicd/terraform/stacks/platform/observability
+          - enterprise-cicd/terraform/stacks/workloads/storage
+          - enterprise-cicd/terraform/stacks/workloads/key-vault
+          - enterprise-cicd/terraform/stacks/workloads/managed-identity
+          - enterprise-cicd/terraform/stacks/workloads/service-bus
+          - enterprise-cicd/terraform/stacks/workloads/managed-redis
+          - enterprise-cicd/terraform/stacks/workloads/postgresql-flexible
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+      - name: Init and validate ${{ matrix.stack }}
         shell: bash
         run: |
           set -euo pipefail
-          stacks=(
-            enterprise-cicd/terraform/stacks/platform/identity
-            enterprise-cicd/terraform/stacks/platform/acr
-            enterprise-cicd/terraform/stacks/platform/connectivity
-            enterprise-cicd/terraform/stacks/platform/aks
-            enterprise-cicd/terraform/stacks/platform/observability
-            enterprise-cicd/terraform/stacks/workloads/storage
-            enterprise-cicd/terraform/stacks/workloads/key-vault
-            enterprise-cicd/terraform/stacks/workloads/managed-identity
-            enterprise-cicd/terraform/stacks/workloads/service-bus
-            enterprise-cicd/terraform/stacks/workloads/managed-redis
-            enterprise-cicd/terraform/stacks/workloads/postgresql-flexible
-          )
-          for stack in "${stacks[@]}"; do
-            echo "==> $stack"
-            terraform -chdir="$stack" init -backend=false -input=false
-            terraform -chdir="$stack" validate
-          done
+          terraform -chdir="${{ matrix.stack }}" init -backend=false -input=false
+          terraform -chdir="${{ matrix.stack }}" validate
 
+  render-requests:
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Render standard developer IaC requests
         shell: bash
         run: |
@@ -85,13 +94,19 @@ jobs:
           pg = json.load(open(root/'postgresql-flexible.json'))
           assert acr['sku'] == 'Standard'
           assert kv['public_network_access_enabled'] is False and kv['private_dns_zone_name'] == 'privatelink.vaultcore.azure.net'
-          assert bus['public_network_access_enabled'] is False and bus['private_dns_zone_name'] == 'privatelink.servicebus.windows.net'
+          assert bus['sku'] == 'Premium' and bus['public_network_access_enabled'] is False
+          assert bus['private_dns_zone_name'] == 'privatelink.servicebus.windows.net'
           assert redis['public_network_access'] == 'Disabled' and redis['private_dns_zone_name'] == 'privatelink.redis.azure.net'
           assert pg['private_dns_zone_name'].endswith('.postgres.database.azure.com')
           assert pg['delegated_subnet_name'] == 'snet-postgresql'
           print('Seven IaC catalog renderers are valid.')
           PY
 
+  policy-contracts:
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Verify PostgreSQL PROD remains blocked until Entra DBA binding exists
         shell: bash
         run: |
@@ -115,11 +130,35 @@ jobs:
             exit 1
           fi
 
-      - name: Assert no apply is executed by validation workflow
+  no-apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert validation workflow never applies infrastructure
         shell: bash
         run: |
           set -euo pipefail
           if grep -nE '(^|[[:space:]])terraform([[:space:]]+-chdir=[^[:space:]]+[[:space:]]+)?apply([[:space:]]|$)' .github/workflows/terraform-framework-validate.yml; then
-            echo 'terraform apply is forbidden in framework validation.' >&2
+            echo 'Terraform Apply is forbidden in framework validation.' >&2
             exit 1
           fi
+
+  framework-gate:
+    if: ${{ always() }}
+    needs:
+      - fmt
+      - validate-stacks
+      - render-requests
+      - policy-contracts
+      - no-apply
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all Terraform framework checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ needs.fmt.result }}' = success
+          test '${{ needs.validate-stacks.result }}' = success
+          test '${{ needs.render-requests.result }}' = success
+          test '${{ needs.policy-contracts.result }}' = success
+          test '${{ needs.no-apply.result }}' = success
