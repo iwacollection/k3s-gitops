@@ -1,0 +1,11 @@
+subscription_id               = "00000000-0000-0000-0000-000000000000"
+location                      = "southeastasia"
+resource_group_name           = "rg-enterprise-cicd-platform"
+acr_name                      = "replacewithgloballyuniqueacr"
+tfstate_storage_account_name  = "replacewithuniquetfstate"
+
+tags = {
+  managed-by  = "terraform"
+  platform    = "enterprise-cicd"
+  environment = "shared"
+}
