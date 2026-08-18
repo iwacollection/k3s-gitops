@@ -1,0 +1,93 @@
+name: PostgreSQL PROD Activation PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      entra_dba_group_object_id:
+        description: Real Microsoft Entra DBA group object ID
+        required: true
+        type: string
+      entra_dba_group_principal_name:
+        description: Real Microsoft Entra DBA group display/principal name
+        required: true
+        type: string
+      base_branch:
+        description: Branch containing the accepted V1 platform control plane
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: postgresql-prod-activation
+  cancel-in-progress: false
+
+jobs:
+  activation-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout activation base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+
+      - name: Prepare platform-owned Entra binding and policy unlock
+        shell: bash
+        env:
+          OBJECT_ID: ${{ inputs.entra_dba_group_object_id }}
+          PRINCIPAL_NAME: ${{ inputs.entra_dba_group_principal_name }}
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/activation/prepare_postgresql_prod_activation.py \
+            --object-id "$OBJECT_ID" \
+            --principal-name "$PRINCIPAL_NAME"
+
+      - name: Require strict activation readiness before PR
+        shell: bash
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/activation/validate_readiness.py --strict-external --output /tmp/readiness.json
+          cat /tmp/readiness.json
+
+      - name: Open reviewed activation PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --exit-code --quiet && { echo 'No activation change is required.'; exit 0; }
+
+          branch="activation/postgresql-prod/${GITHUB_RUN_ID}"
+          git config user.name "enterprise-cicd-bot"
+          git config user.email "enterprise-cicd-bot@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add \
+            enterprise-cicd/contracts/environment-bindings.json \
+            enterprise-cicd/iac-catalog/services/postgresql-flexible/v1/policy.json
+          git commit -m "feat(iac): activate governed PostgreSQL PROD catalog"
+          git push origin "$branch"
+
+          cat > /tmp/pr.md <<'EOF'
+          ## PostgreSQL PROD activation
+
+          This PR performs the repository-side activation only:
+
+          - binds the real platform-owned Microsoft Entra DBA group for PROD;
+          - unlocks the predeclared PostgreSQL PROD catalog policy;
+          - passes strict Platform Activation Readiness before the PR is opened.
+
+          It does **not** run Terraform Apply and does not create or modify Azure resources. Normal review, Plan, approval and protected Apply controls still apply.
+          EOF
+
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$branch" \
+            --title "feat(iac): activate governed PostgreSQL PROD catalog" \
+            --body-file /tmp/pr.md
