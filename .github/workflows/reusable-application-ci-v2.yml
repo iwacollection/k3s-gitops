@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Source security scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: ${{ needs.resolve.outputs.source_path }}
@@ -121,6 +121,7 @@ jobs:
         shell: bash
         env:
           SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
+          PLATFORM_CACHE_ROOT: ${{ runner.temp }}/platform-cache/${{ needs.resolve.outputs.application }}
           MAVEN_PROXY_URL: ${{ secrets.MAVEN_PROXY_URL }}
           PYPI_INDEX_URL: ${{ secrets.PYPI_INDEX_URL }}
           GO_PROXY_URL: ${{ secrets.GO_PROXY_URL }}
@@ -292,7 +293,7 @@ jobs:
           subscription-id: ${{ steps.auth.outputs.subscription_id }}
       - run: az acr login --name '${{ inputs.acr_name }}'
       - name: Container vulnerability scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ needs.image-build.outputs.image_ref }}
           format: table
