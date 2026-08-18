@@ -73,18 +73,21 @@ jobs:
           CLUSTER="$(jq -r .spec.azure.clusterName "$BINDING")"
           CLUSTER_TYPE="$(jq -r .spec.azure.clusterType "$BINDING")"
           FLUX_NAME="$(jq -r .spec.flux.configurationName "$BINDING")"
+          FLUX_BRANCH="$(jq -r .spec.flux.branch "$BINDING")"
           FLUX_KUSTOMIZATION="$(jq -r '.spec.flux.kustomizations[] | select(.name == "apps-dev") | .name' "$BINDING")"
 
           test -n "$RG"
           test -n "$CLUSTER"
           test -n "$CLUSTER_TYPE"
           test -n "$FLUX_NAME"
+          test -n "$FLUX_BRANCH"
           test -n "$FLUX_KUSTOMIZATION"
 
           echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
           echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
           echo "cluster_type=$CLUSTER_TYPE" >> "$GITHUB_OUTPUT"
           echo "flux_name=$FLUX_NAME" >> "$GITHUB_OUTPUT"
+          echo "flux_branch=$FLUX_BRANCH" >> "$GITHUB_OUTPUT"
           echo "flux_kustomization=$FLUX_KUSTOMIZATION" >> "$GITHUB_OUTPUT"
 
       - name: Verify Azure subscription and DEV resource group
@@ -149,15 +152,25 @@ jobs:
           CLUSTER: ${{ steps.target.outputs.cluster }}
           CLUSTER_TYPE: ${{ steps.target.outputs.cluster_type }}
           FLUX_NAME: ${{ steps.target.outputs.flux_name }}
+          EXPECTED_FLUX_BRANCH: ${{ steps.target.outputs.flux_branch }}
           KUSTOMIZATION: ${{ steps.target.outputs.flux_kustomization }}
         run: |
           set -euo pipefail
+          ACTUAL_BRANCH="$(az k8s-configuration flux show \
+            --resource-group "$RG" \
+            --cluster-name "$CLUSTER" \
+            --cluster-type "$CLUSTER_TYPE" \
+            --name "$FLUX_NAME" \
+            --query 'gitRepository.repositoryRef.branch' \
+            -o tsv)"
+          test "$ACTUAL_BRANCH" = "$EXPECTED_FLUX_BRANCH"
+
           az k8s-configuration flux show \
             --resource-group "$RG" \
             --cluster-name "$CLUSTER" \
             --cluster-type "$CLUSTER_TYPE" \
             --name "$FLUX_NAME" \
-            --query '{name:name,provisioningState:provisioningState,repositoryRef:gitRepository.ref,repositoryUrl:gitRepository.url}' \
+            --query '{name:name,provisioningState:provisioningState,branch:gitRepository.repositoryRef.branch,repositoryUrl:gitRepository.url}' \
             -o json
 
           az k8s-configuration flux kustomization show \
@@ -199,6 +212,7 @@ jobs:
           ACR_NAME: ${{ steps.acr.outputs.name }}
           LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
           PRINCIPAL_ID: ${{ steps.auth.outputs.principal_id }}
+          FLUX_BRANCH: ${{ steps.target.outputs.flux_branch }}
         run: |
           set -euo pipefail
           {
@@ -209,7 +223,7 @@ jobs:
             echo "- AKS: \`$CLUSTER\`"
             echo "- ACR: \`$ACR_NAME\` (\`$LOGIN_SERVER\`)"
             echo '- ACR read access: PASS'
-            echo '- Flux configuration: PASS'
+            echo "- Flux configuration: PASS (\`$FLUX_BRANCH\`)"
             echo '- AKS namespace-scoped read access: PASS'
             echo '- Azure mutations performed: NONE'
           } >> "$GITHUB_STEP_SUMMARY"
