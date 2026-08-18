@@ -3,5 +3,5 @@ kind: Namespace
 metadata:
   name: cicd-dev
   labels:
-    platform.openai.example/environment: dev
+    platform.cicd/environment: dev
     app.kubernetes.io/managed-by: flux
