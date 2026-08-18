@@ -74,6 +74,15 @@ def main() -> None:
     profile_path = ROOT / "release-catalog" / release_profile / "profile.json"
     if not profile_path.is_file():
         fail(f"unknown release profile: {release_profile}")
+    profile = load_json(profile_path)
+    strategy = profile.get("metadata", {}).get("strategy", "")
+    execution = profile.get("spec", {}).get("execution", {})
+    if execution.get("ready") is not True:
+        controller = execution.get("requiresController", "unspecified")
+        fail(
+            f"release profile {release_profile} is cataloged but not executable yet; "
+            f"strategy={strategy}, required-controller={controller}"
+        )
 
     app_base = args.gitops_root / "apps" / application / "base"
     if not (app_base / "kustomization.yaml").is_file():
@@ -118,6 +127,8 @@ def main() -> None:
             "from": source_environment,
             "to": target_environment,
             "releaseProfile": release_profile,
+            "strategy": strategy,
+            "executionEngine": execution.get("engine"),
             "changeReason": spec.get("changeReason", ""),
             "sourceRequest": args.request.as_posix(),
         },
@@ -132,6 +143,8 @@ def main() -> None:
         "overlay": str(overlay_dir / "kustomization.yaml"),
         "digest": digest,
         "releaseProfile": release_profile,
+        "strategy": strategy,
+        "executionEngine": execution.get("engine"),
     }, indent=2))
 
 
