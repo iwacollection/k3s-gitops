@@ -1,0 +1,13 @@
+{
+  "apiVersion": "platform.ci/v1",
+  "kind": "BuildProfile",
+  "metadata": {"name": "go-service-v1", "language": "go", "version": "v1"},
+  "spec": {
+    "buildImage": "go-builder:v1",
+    "dependencyProxy": "go",
+    "commands": {"verify": "go test ./...", "package": "go build ./..."},
+    "outputs": ["binary", "container"],
+    "requiredControls": ["unit-test", "secret-scan", "sca", "sast", "sbom", "container-scan", "sign", "provenance"],
+    "cacheKeyInputs": ["go.sum", "go-version", "build-image-version", "architecture"]
+  }
+}
