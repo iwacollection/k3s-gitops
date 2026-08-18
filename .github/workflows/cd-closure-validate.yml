@@ -1,0 +1,54 @@
+name: CD Closure Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/promotion/**'
+      - 'enterprise-cicd/gitops/**'
+      - 'enterprise-cicd/testing/contracts/validate_cd_closure.py'
+      - '.github/workflows/reusable-release-verification-v1.yml'
+      - '.github/workflows/cd-closure-validate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'enterprise-cicd/promotion/**'
+      - 'enterprise-cicd/gitops/**'
+      - '.github/workflows/reusable-release-verification-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-cd-closure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile CD helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            enterprise-cicd/promotion/verification/evaluate.py \
+            enterprise-cicd/promotion/record_approved_release.py \
+            enterprise-cicd/promotion/render_rollback.py \
+            enterprise-cicd/testing/contracts/validate_cd_closure.py
+
+      - name: Validate deploy verification and rollback closure
+        run: python enterprise-cicd/testing/contracts/validate_cd_closure.py
+
+      - name: Enforce pull-only rollback workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/reusable-release-verification-v1.yml
+          if grep -nE 'kubectl[[:space:]]+apply|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+get-credentials' "$workflow"; then
+            echo 'Verification/rollback workflow must not directly deploy to AKS.' >&2
+            exit 1
+          fi
+          grep -F 'gh pr create' "$workflow"
+          grep -F 'previousApproved' enterprise-cicd/promotion/render_rollback.py
+          grep -F 'rebuildForbidden' enterprise-cicd/promotion/rollback/default.json
