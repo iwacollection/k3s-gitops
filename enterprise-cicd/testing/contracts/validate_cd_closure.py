@@ -18,7 +18,7 @@ def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def observation(digest: str, *, rollout: bool = True) -> dict:
+def observation(digest: str, *, rollout: bool = True, artifact_identity: bool = True) -> dict:
     return {
         "apiVersion": "platform.verification/v1",
         "kind": "DeploymentObservation",
@@ -27,6 +27,7 @@ def observation(digest: str, *, rollout: bool = True) -> dict:
             "artifactRepository": "example.azurecr.io/go-smoke",
             "artifactDigest": digest,
             "fluxReady": True,
+            "artifactIdentityReady": artifact_identity,
             "rolloutReady": rollout,
             "healthEndpointReady": True,
             "errorRatePercent": None,
@@ -48,6 +49,7 @@ def main() -> None:
     policy = json.loads((ROOT / "promotion" / "verification" / "default.json").read_text(encoding="utf-8"))
     envs = policy["spec"]["environments"]
     assert set(envs) == {"dev", "test", "prod"}
+    assert "artifact-identity" in envs["dev"]["required"]
     assert "error-rate" not in envs["dev"]["required"]
     assert "error-rate" in envs["prod"]["required"]
     assert policy["spec"]["onFailure"] == "rollback-pr"
@@ -63,6 +65,11 @@ def main() -> None:
         tmpdir = Path(tmp)
         gitops = tmpdir / "gitops"
         shutil.copytree(ROOT / "gitops", gitops)
+
+        identity_fail = tmpdir / "identity-fail.json"
+        identity_fail_result = tmpdir / "identity-fail-result.json"
+        write_json(identity_fail, observation(DIGEST_A, artifact_identity=False))
+        run("python", "enterprise-cicd/promotion/verification/evaluate.py", "--observation", str(identity_fail), "--output", str(identity_fail_result), expected=2)
 
         pass_a = tmpdir / "pass-a.json"
         result_a = tmpdir / "result-a.json"
@@ -95,7 +102,7 @@ def main() -> None:
         assert rollback["spec"]["rebuild"] is False
 
     print("CD CLOSURE VALIDATION: PASSED")
-    print("A pass -> B pass -> C fails verification -> rollback to B (last approved before candidate)")
+    print("artifact identity gate + A pass -> B pass -> C fails -> rollback B")
 
 
 if __name__ == "__main__":
