@@ -1,0 +1,20 @@
+# Azure DevOps variable group JSON example
+# docs/azure-devops-variable-group.json
+# Use this as a template for creating a variable group via the Azure DevOps REST API (requires a PAT)
+
+{
+  "name": "k3s-gitops-vars",
+  "variables": {
+    "AZURE_SUBSCRIPTION_ID": { "value": "<your-subscription-id>", "isSecret": false },
+    "AZURE_TENANT_ID": { "value": "<your-tenant-id>", "isSecret": false },
+    "AZURE_CLIENT_ID": { "value": "<your-client-id>", "isSecret": false },
+    "AZURE_CLIENT_SECRET": { "value": "<your-client-secret>", "isSecret": true },
+    "TFSTATE_STORAGE_ACCOUNT": { "value": "<tfstate-storage-account>", "isSecret": false },
+    "TFSTATE_CONTAINER": { "value": "tfstate", "isSecret": false },
+    "TFSTATE_RESOURCE_GROUP": { "value": "<tfstate-rg>", "isSecret": false },
+    "ACR_NAME": { "value": "<acr-name>", "isSecret": false },
+    "ACR_LOGIN_SERVER": { "value": "<acr-login-server>", "isSecret": false },
+    "TF_AKS_RG": { "value": "rg-k3s-gitops-dev", "isSecret": false },
+    "TF_AKS_CLUSTER": { "value": "k3s-gitops-dev-aks", "isSecret": false }
+  }
+}
