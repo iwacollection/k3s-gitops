@@ -32,6 +32,30 @@ jobs:
       - name: Validate control contracts
         run: python enterprise-cicd/contracts/validate_contracts.py
 
+      - name: Test platform backend rendering
+        env:
+          TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
+        run: |
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope platform \
+            --stack identity \
+            --auth oidc \
+            --output /tmp/platform-backend.hcl
+          grep -F 'key                  = "platform/identity.tfstate"' /tmp/platform-backend.hcl
+          grep -F 'use_oidc             = true' /tmp/platform-backend.hcl
+
+      - name: Test workload backend rendering
+        env:
+          TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
+        run: |
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope workload \
+            --environment dev \
+            --workload payment \
+            --auth oidc \
+            --output /tmp/workload-backend.hcl
+          grep -F 'key                  = "workload/dev/payment.tfstate"' /tmp/workload-backend.hcl
+
       - name: Verify no Terraform state is tracked
         shell: bash
         run: |
