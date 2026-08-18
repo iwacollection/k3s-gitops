@@ -9,18 +9,22 @@ module "resource_group" {
 module "aks" {
   source = "../../../modules/aks"
 
-  name                    = var.cluster_name
-  resource_group_name     = module.resource_group.name
-  location                = module.resource_group.location
-  dns_prefix              = var.dns_prefix
-  kubernetes_version      = var.kubernetes_version
-  sku_tier                = "Standard"
-  private_cluster_enabled = var.private_cluster_enabled
-  admin_group_object_ids  = var.admin_group_object_ids
-  outbound_type           = var.outbound_type
-  service_cidr            = var.service_cidr
-  dns_service_ip          = var.dns_service_ip
-  tags                    = var.tags
+  name                           = var.cluster_name
+  resource_group_name            = module.resource_group.name
+  location                       = module.resource_group.location
+  dns_prefix                     = var.dns_prefix
+  kubernetes_version             = var.kubernetes_version
+  sku_tier                       = "Standard"
+  private_cluster_enabled        = var.private_cluster_enabled
+  admin_group_object_ids         = var.admin_group_object_ids
+  outbound_type                  = var.outbound_type
+  service_cidr                   = var.service_cidr
+  dns_service_ip                 = var.dns_service_ip
+  log_analytics_workspace_id     = var.log_analytics_workspace_id
+  managed_prometheus_enabled     = var.managed_prometheus_enabled
+  prometheus_annotations_allowed = var.prometheus_annotations_allowed
+  prometheus_labels_allowed      = var.prometheus_labels_allowed
+  tags                           = var.tags
 
   system_node_pool = {
     name                 = "system"

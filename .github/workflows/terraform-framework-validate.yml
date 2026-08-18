@@ -44,6 +44,7 @@ jobs:
           - enterprise-cicd/terraform/stacks/platform/connectivity
           - enterprise-cicd/terraform/stacks/platform/aks
           - enterprise-cicd/terraform/stacks/platform/observability
+          - enterprise-cicd/terraform/stacks/platform/aks-observability
           - enterprise-cicd/terraform/stacks/workloads/storage
           - enterprise-cicd/terraform/stacks/workloads/key-vault
           - enterprise-cicd/terraform/stacks/workloads/managed-identity

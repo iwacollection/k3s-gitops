@@ -77,6 +77,26 @@ variable "dns_service_ip" {
   default = "10.100.0.10"
 }
 
+variable "log_analytics_workspace_id" {
+  type    = string
+  default = null
+}
+
+variable "managed_prometheus_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "prometheus_annotations_allowed" {
+  type    = string
+  default = ""
+}
+
+variable "prometheus_labels_allowed" {
+  type    = string
+  default = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
