@@ -5,7 +5,9 @@ on:
     paths:
       - 'enterprise-cicd/promotion/**'
       - 'enterprise-cicd/gitops/**'
+      - 'enterprise-cicd/contracts/identity-contract.json'
       - 'enterprise-cicd/testing/contracts/validate_cd_closure.py'
+      - '.github/workflows/reusable-aks-observation-v1.yml'
       - '.github/workflows/reusable-release-verification-v1.yml'
       - '.github/workflows/cd-closure-validate.yml'
   push:
@@ -14,6 +16,8 @@ on:
     paths:
       - 'enterprise-cicd/promotion/**'
       - 'enterprise-cicd/gitops/**'
+      - 'enterprise-cicd/contracts/identity-contract.json'
+      - '.github/workflows/reusable-aks-observation-v1.yml'
       - '.github/workflows/reusable-release-verification-v1.yml'
 
 permissions:
@@ -32,23 +36,30 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile \
+            enterprise-cicd/promotion/verification/collect_aks_observation.py \
             enterprise-cicd/promotion/verification/evaluate.py \
             enterprise-cicd/promotion/record_approved_release.py \
             enterprise-cicd/promotion/render_rollback.py \
             enterprise-cicd/testing/contracts/validate_cd_closure.py
 
-      - name: Validate deploy verification and rollback closure
+      - name: Validate read-only observation, verification and rollback closure
         run: python enterprise-cicd/testing/contracts/validate_cd_closure.py
 
-      - name: Enforce pull-only rollback workflow
+      - name: Enforce read-only observer and pull-only rollback
         shell: bash
         run: |
           set -euo pipefail
-          workflow=.github/workflows/reusable-release-verification-v1.yml
-          if grep -nE 'kubectl[[:space:]]+apply|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+get-credentials' "$workflow"; then
-            echo 'Verification/rollback workflow must not directly deploy to AKS.' >&2
+          observer=.github/workflows/reusable-aks-observation-v1.yml
+          verifier=.github/workflows/reusable-release-verification-v1.yml
+
+          if grep -nE 'kubectl[[:space:]]+(apply|create|delete|patch|edit|scale)|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+update' "$observer" "$verifier"; then
+            echo 'CD observation/verification workflows must not directly mutate AKS.' >&2
             exit 1
           fi
-          grep -F 'gh pr create' "$workflow"
-          grep -F 'previousApproved' enterprise-cicd/promotion/render_rollback.py
+
+          grep -F "admin: 'false'" "$observer"
+          grep -F 'azure/aks-set-context@v5' "$observer"
+          grep -F 'artifactIdentityReady' enterprise-cicd/promotion/verification/collect_aks_observation.py
+          grep -F 'gh pr create' "$verifier"
+          grep -F 'rollbackBaseline' enterprise-cicd/promotion/render_rollback.py
           grep -F 'rebuildForbidden' enterprise-cicd/promotion/rollback/default.json
