@@ -1,0 +1,130 @@
+name: Platform Build Images Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      acr_name:
+        description: Target Azure Container Registry name without azurecr.io
+        required: true
+        type: string
+      github_environment:
+        description: Protected GitHub Environment providing Azure OIDC secrets
+        required: true
+        default: dev
+        type: string
+      confirm_publish:
+        description: Explicitly allow immutable platform build images to be pushed
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: platform-build-images-${{ inputs.acr_name }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate build image catalog before Azure access
+        shell: bash
+        run: python enterprise-cicd/activation/validate_readiness.py
+
+  publish:
+    if: ${{ inputs.confirm_publish }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.github_environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image_key:
+          - java21-maven:v1
+          - python-uv:v1
+          - go-builder:v1
+          - cpp-cmake-conan:v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve immutable image contract
+        id: image
+        shell: bash
+        env:
+          IMAGE_KEY: ${{ matrix.image_key }}
+          ACR_NAME: ${{ inputs.acr_name }}
+        run: |
+          set -euo pipefail
+          CATALOG=enterprise-cicd/build-images/versions.json
+          CONTEXT="$(jq -r --arg key "$IMAGE_KEY" '.images[$key].context // empty' "$CATALOG")"
+          DOCKERFILE="$(jq -r --arg key "$IMAGE_KEY" '.images[$key].dockerfile // "Dockerfile"' "$CATALOG")"
+          NAME="${IMAGE_KEY%:*}"
+          VERSION="${IMAGE_KEY##*:}"
+          REPOSITORY="build/${NAME}"
+          LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
+          test -n "$CONTEXT" && test -f "$CONTEXT/$DOCKERFILE"
+          echo "context=$CONTEXT" >> "$GITHUB_OUTPUT"
+          echo "dockerfile=$DOCKERFILE" >> "$GITHUB_OUTPUT"
+          echo "repository=$REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse mutable overwrite
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+          REPOSITORY: ${{ steps.image.outputs.repository }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          set -euo pipefail
+          if az acr repository show --name "$ACR_NAME" --image "$REPOSITORY:$VERSION" >/dev/null 2>&1; then
+            echo "Immutable platform image already exists: $REPOSITORY:$VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build and push versioned platform image
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+          LOGIN_SERVER: ${{ steps.image.outputs.login_server }}
+          REPOSITORY: ${{ steps.image.outputs.repository }}
+          VERSION: ${{ steps.image.outputs.version }}
+          CONTEXT: ${{ steps.image.outputs.context }}
+          DOCKERFILE: ${{ steps.image.outputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME"
+          IMAGE="$LOGIN_SERVER/$REPOSITORY:$VERSION"
+          docker build --pull --file "$CONTEXT/$DOCKERFILE" --tag "$IMAGE" "$CONTEXT"
+          docker push "$IMAGE"
+
+      - name: Record immutable digest evidence
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+          LOGIN_SERVER: ${{ steps.image.outputs.login_server }}
+          REPOSITORY: ${{ steps.image.outputs.repository }}
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          set -euo pipefail
+          DIGEST="$(az acr repository show --name "$ACR_NAME" --image "$REPOSITORY:$VERSION" --query digest -o tsv)"
+          test -n "$DIGEST"
+          {
+            echo '## Published platform build image'
+            echo "- Image: \`$LOGIN_SERVER/$REPOSITORY:$VERSION\`"
+            echo "- Digest: \`$DIGEST\`"
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo '- Mutable overwrite: forbidden'
+          } >> "$GITHUB_STEP_SUMMARY"
