@@ -1,0 +1,117 @@
+name: GitOps Promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_request:
+        description: Committed release request under enterprise-cicd/release-requests/
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      release_request:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: gitops-promotion-${{ inputs.release_request }}
+  cancel-in-progress: false
+
+jobs:
+  render-and-open-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate request path
+        shell: bash
+        env:
+          REQUEST: ${{ inputs.release_request }}
+        run: |
+          set -euo pipefail
+          case "$REQUEST" in
+            enterprise-cicd/release-requests/*.json) ;;
+            *)
+              echo "Release request must be a committed JSON file under enterprise-cicd/release-requests/." >&2
+              exit 1
+              ;;
+          esac
+          [[ -f "$REQUEST" ]]
+
+      - name: Render governed GitOps desired state
+        id: render
+        shell: bash
+        env:
+          REQUEST: ${{ inputs.release_request }}
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/promotion/render_gitops_overlay.py --request "$REQUEST"
+          echo "application=$(jq -r .metadata.application "$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "environment=$(jq -r .spec.to "$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "digest=$(jq -r .spec.artifactDigest "$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "profile=$(jq -r .spec.releaseProfile "$REQUEST")" >> "$GITHUB_OUTPUT"
+
+      - name: Render Kustomize and enforce immutable image
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ steps.render.outputs.environment }}
+          DIGEST: ${{ steps.render.outputs.digest }}
+        run: |
+          set -euo pipefail
+          kubectl kustomize "enterprise-cicd/gitops/environments/$ENVIRONMENT" > /tmp/rendered.yaml
+          grep -F "$DIGEST" /tmp/rendered.yaml
+          if grep -nE 'image: .*:latest([[:space:]]|$)' /tmp/rendered.yaml; then
+            echo "Mutable latest image is forbidden in GitOps desired state." >&2
+            exit 1
+          fi
+
+      - name: Open protected GitOps pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP: ${{ steps.render.outputs.application }}
+          ENVIRONMENT: ${{ steps.render.outputs.environment }}
+          DIGEST: ${{ steps.render.outputs.digest }}
+          PROFILE: ${{ steps.render.outputs.profile }}
+          REQUEST: ${{ inputs.release_request }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- enterprise-cicd/gitops; then
+            echo "GitOps desired state already matches this release request."
+            exit 0
+          fi
+
+          branch="gitops/${APP}/${ENVIRONMENT}/${GITHUB_RUN_ID}"
+          git config user.name "enterprise-cicd-bot"
+          git config user.email "enterprise-cicd-bot@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add enterprise-cicd/gitops
+          git commit -m "chore(gitops): promote ${APP} to ${ENVIRONMENT}"
+          git push origin "$branch"
+
+          cat > /tmp/gitops-pr.md <<EOF
+          ## Governed GitOps promotion
+
+          - Application: \`${APP}\`
+          - Target environment: \`${ENVIRONMENT}\`
+          - Artifact digest: \`${DIGEST}\`
+          - Release profile: \`${PROFILE}\`
+          - Source request: \`${REQUEST}\`
+
+          This PR changes Git desired state only. CI does not connect to AKS and does not run kubectl apply or Helm deployment commands.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore(gitops): promote ${APP} to ${ENVIRONMENT}" \
+            --body-file /tmp/gitops-pr.md
