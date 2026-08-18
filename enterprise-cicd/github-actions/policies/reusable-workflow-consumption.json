@@ -1,0 +1,17 @@
+{
+  "apiVersion": "platform.ci/v1",
+  "kind": "ReusableWorkflowConsumptionPolicy",
+  "spec": {
+    "canonicalRepository": "iwacollection/k3s-gitops",
+    "singleApplicationWorkflow": ".github/workflows/reusable-application-ci-v1.yml",
+    "matrixWorkflow": ".github/workflows/reusable-application-ci-matrix-v1.yml",
+    "productionRefPolicy": "immutable-tag-or-commit-sha",
+    "mainBranchAllowedForProduction": false,
+    "callerOwnsBusinessTriggers": true,
+    "platformOwnsDAG": true,
+    "matrixScope": "horizontal-parallelism",
+    "needsScope": "vertical-stage-dependencies",
+    "environmentMatrixAllowed": false,
+    "directProductionDeploymentFromCI": false
+  }
+}
