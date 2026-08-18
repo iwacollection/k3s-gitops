@@ -26,12 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout release-control source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate real release request path
+      - name: Validate and stage real release request
+        id: request
         shell: bash
         env:
           REQUEST: ${{ inputs.release_request }}
@@ -48,43 +49,54 @@ jobs:
               exit 1
               ;;
           esac
-          [[ -f "$REQUEST" ]]
+          test -f "$REQUEST"
           DIGEST="$(jq -r .spec.artifactDigest "$REQUEST")"
+          ENVIRONMENT="$(jq -r .spec.to "$REQUEST")"
+          APPLICATION="$(jq -r .metadata.application "$REQUEST")"
+          PROFILE="$(jq -r .spec.releaseProfile "$REQUEST")"
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-
-      - name: Render governed GitOps desired state
-        id: render
-        shell: bash
-        env:
-          REQUEST: ${{ inputs.release_request }}
-        run: |
-          set -euo pipefail
-          python enterprise-cicd/promotion/render_gitops_overlay.py --request "$REQUEST"
-          echo "application=$(jq -r .metadata.application "$REQUEST")" >> "$GITHUB_OUTPUT"
-          echo "environment=$(jq -r .spec.to "$REQUEST")" >> "$GITHUB_OUTPUT"
-          echo "digest=$(jq -r .spec.artifactDigest "$REQUEST")" >> "$GITHUB_OUTPUT"
-          echo "profile=$(jq -r .spec.releaseProfile "$REQUEST")" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve protected desired-state branch
-        id: target
-        shell: bash
-        env:
-          ENVIRONMENT: ${{ steps.render.outputs.environment }}
-        run: |
-          set -euo pipefail
           case "$ENVIRONMENT" in
-            dev)  BASE_BRANCH="gitops/dev" ;;
+            dev) BASE_BRANCH="gitops/dev" ;;
             test) BASE_BRANCH="gitops/test" ;;
             prod) BASE_BRANCH="gitops/prod" ;;
             *) echo "Unsupported environment: $ENVIRONMENT" >&2; exit 1 ;;
           esac
+          cp "$REQUEST" /tmp/release-request.json
+          echo "application=$APPLICATION" >> "$GITHUB_OUTPUT"
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
           echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Switch to protected desired-state baseline
+        shell: bash
+        env:
+          BASE_BRANCH: ${{ steps.request.outputs.base_branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_BRANCH"
+          git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
+          test -z "$(git status --porcelain)"
+
+      - name: Render governed GitOps desired state
+        shell: bash
+        env:
+          ORIGINAL_REQUEST: ${{ inputs.release_request }}
+          APP: ${{ steps.request.outputs.application }}
+          ENVIRONMENT: ${{ steps.request.outputs.environment }}
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/promotion/render_gitops_overlay.py --request /tmp/release-request.json
+          EVIDENCE="enterprise-cicd/gitops/environments/$ENVIRONMENT/apps/$APP/release-evidence.json"
+          test -f "$EVIDENCE"
+          jq --arg source "$ORIGINAL_REQUEST" '.spec.sourceRequest = $source' "$EVIDENCE" > /tmp/release-evidence.json
+          mv /tmp/release-evidence.json "$EVIDENCE"
 
       - name: Render Kustomize and enforce immutable image
         shell: bash
         env:
-          ENVIRONMENT: ${{ steps.render.outputs.environment }}
-          DIGEST: ${{ steps.render.outputs.digest }}
+          ENVIRONMENT: ${{ steps.request.outputs.environment }}
+          DIGEST: ${{ steps.request.outputs.digest }}
         run: |
           set -euo pipefail
           kubectl kustomize "enterprise-cicd/gitops/environments/$ENVIRONMENT" > /tmp/rendered.yaml
@@ -98,20 +110,18 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          APP: ${{ steps.render.outputs.application }}
-          ENVIRONMENT: ${{ steps.render.outputs.environment }}
-          DIGEST: ${{ steps.render.outputs.digest }}
-          PROFILE: ${{ steps.render.outputs.profile }}
+          APP: ${{ steps.request.outputs.application }}
+          ENVIRONMENT: ${{ steps.request.outputs.environment }}
+          DIGEST: ${{ steps.request.outputs.digest }}
+          PROFILE: ${{ steps.request.outputs.profile }}
           REQUEST: ${{ inputs.release_request }}
-          BASE_BRANCH: ${{ steps.target.outputs.base_branch }}
+          BASE_BRANCH: ${{ steps.request.outputs.base_branch }}
         run: |
           set -euo pipefail
-
           if git diff --quiet -- enterprise-cicd/gitops; then
             echo "GitOps desired state already matches this release request."
             exit 0
           fi
-
           branch="gitops/${APP}/${ENVIRONMENT}/${GITHUB_RUN_ID}"
           git config user.name "enterprise-cicd-bot"
           git config user.email "enterprise-cicd-bot@users.noreply.github.com"
@@ -119,7 +129,6 @@ jobs:
           git add enterprise-cicd/gitops
           git commit -m "chore(gitops): promote ${APP} to ${ENVIRONMENT}"
           git push origin "$branch"
-
           cat > /tmp/gitops-pr.md <<EOF
           ## Governed GitOps promotion
 
@@ -132,9 +141,4 @@ jobs:
 
           This PR changes Git desired state only. The build/promotion job has no direct Kubernetes deployment path.
           EOF
-
-          gh pr create \
-            --base "$BASE_BRANCH" \
-            --head "$branch" \
-            --title "chore(gitops): promote ${APP} to ${ENVIRONMENT}" \
-            --body-file /tmp/gitops-pr.md
+          gh pr create --base "$BASE_BRANCH" --head "$branch" --title "chore(gitops): promote ${APP} to ${ENVIRONMENT}" --body-file /tmp/gitops-pr.md
