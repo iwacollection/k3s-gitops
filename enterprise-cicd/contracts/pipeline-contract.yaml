@@ -1,0 +1,71 @@
+version: v1
+platform:
+  cloud: azure
+  source_controls:
+    - github
+    - azure-repos
+  orchestrators:
+    - github-actions
+    - azure-pipelines
+principles:
+  build_once_promote_many: true
+  ephemeral_execution_preferred: true
+  long_lived_cloud_secrets_allowed: false
+  production_approval_required: true
+  terraform_plan_apply_separated: true
+languages:
+  go:
+    artifact: binary
+    dependency_lock: go.sum
+    cache_dimensions: [os, arch, go_version, lock_hash]
+  python:
+    artifact: wheel_or_container
+    dependency_lock: uv.lock
+    cache_dimensions: [os, arch, python_version, lock_hash]
+  java:
+    artifact: jar_or_container
+    dependency_lock: pom.xml_or_gradle_lock
+    cache_dimensions: [os, arch, jdk_version, lock_hash]
+  cpp:
+    artifact: binary
+    dependency_lock: conan_lock_or_vcpkg_manifest
+    cache_dimensions: [os, arch, compiler, compiler_version, lock_hash]
+stages:
+  pull_request:
+    - checkout
+    - dependency_restore
+    - lint
+    - unit_test
+    - build
+    - security_scan
+  main:
+    - checkout
+    - dependency_restore
+    - test
+    - build
+    - sbom
+    - package
+    - publish_immutable_artifact
+  infrastructure:
+    - terraform_fmt
+    - terraform_validate
+    - terraform_plan
+    - policy_check
+    - approval
+    - terraform_apply
+  deployment:
+    - resolve_artifact_digest
+    - deploy_dev
+    - verify_dev
+    - deploy_staging
+    - verify_staging
+    - production_approval
+    - deploy_production
+    - verify_production
+    - rollback_on_failed_verification
+azure:
+  container_registry: acr
+  kubernetes: aks
+  terraform_state: azure_storage
+  identity: workload_identity_federation
+  azure_devops_agent_strategy: managed_devops_pools
