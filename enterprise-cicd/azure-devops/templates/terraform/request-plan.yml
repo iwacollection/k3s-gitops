@@ -43,7 +43,6 @@ steps:
         ENVIRONMENT=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec"]["environment"])' "$REQUEST")
         SERVICE=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec"]["service"])' "$REQUEST")
         REQUEST_NAME=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["name"])' "$REQUEST")
-        TEMPLATE_VERSION=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec"]["templateVersion"])' "$REQUEST")
         ROOT_STACK=$(python -c 'import json,sys,pathlib; r=json.load(open(sys.argv[1])); p=pathlib.Path("enterprise-cicd/iac-catalog/services")/r["spec"]["service"]/r["spec"]["templateVersion"]/("catalog.json"); print(json.load(open(p))["rootStack"])' "$REQUEST")
 
         python enterprise-cicd/iac-catalog/render_request.py \
@@ -89,6 +88,21 @@ steps:
           -out="$WORK/tfplan"
 
         terraform -chdir="$ROOT_STACK" show -no-color "$WORK/tfplan" > "$WORK/plan.txt"
+
+        {
+          echo "# Terraform Plan Review"
+          echo
+          echo "- Request: \`$REQUEST_NAME\`"
+          echo "- Environment: \`$ENVIRONMENT\`"
+          echo "- Service: \`$SERVICE\`"
+          echo "- Root stack: \`$ROOT_STACK\`"
+          echo
+          echo '```text'
+          cat "$WORK/plan.txt"
+          echo '```'
+        } > "$WORK/plan-summary.md"
+
+        echo "##vso[task.uploadsummary]$WORK/plan-summary.md"
 
         cp "$REQUEST" "$WORK/request.json"
         printf '%s\n' "$ROOT_STACK" > "$WORK/root-stack.txt"
