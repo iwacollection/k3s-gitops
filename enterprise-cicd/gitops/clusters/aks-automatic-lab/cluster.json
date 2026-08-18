@@ -14,7 +14,7 @@
     "flux": {
       "extension": "microsoft.flux",
       "configurationName": "enterprise-cicd",
-      "namespace": "flux-system",
+      "namespace": "enterprise-cicd",
       "scope": "cluster",
       "repository": "https://github.com/iwacollection/k3s-gitops",
       "branch": "gitops/dev",
