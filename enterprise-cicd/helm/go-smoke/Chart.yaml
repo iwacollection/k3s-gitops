@@ -1,0 +1,6 @@
+apiVersion: v2
+name: go-smoke
+description: Smoke workload for validating the enterprise Azure CI/CD path
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
