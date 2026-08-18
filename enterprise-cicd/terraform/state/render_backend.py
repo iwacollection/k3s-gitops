@@ -19,12 +19,18 @@ def quote(value: str) -> str:
     return json.dumps(value)
 
 
+def valid_name(value: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", value))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render a safe azurerm backend.hcl from enterprise state contracts")
-    parser.add_argument("--scope", choices=["platform", "workload"], required=True)
+    parser.add_argument("--scope", choices=["platform", "workload", "catalog"], required=True)
     parser.add_argument("--stack", help="Platform stack name, e.g. identity/aks/acr")
     parser.add_argument("--environment", choices=["dev", "test", "prod"])
     parser.add_argument("--workload", help="Workload name for workload state")
+    parser.add_argument("--service", help="Catalog service name, e.g. acr/redis/database")
+    parser.add_argument("--request", help="Catalog request name")
     parser.add_argument("--auth", choices=["oidc", "cli"], default="oidc")
     parser.add_argument("--output", default="backend.hcl")
     args = parser.parse_args()
@@ -52,19 +58,39 @@ def main() -> int:
             print(f"unknown platform stack: {args.stack}; allowed={','.join(sorted(platform_keys))}", file=sys.stderr)
             return 2
         key = platform_keys[args.stack]
-    else:
+
+    elif args.scope == "workload":
         if not args.environment or not args.workload:
             print("--environment and --workload are required for workload scope", file=sys.stderr)
             return 2
         if args.environment not in env_contract.get("environments", {}):
             print(f"unknown environment: {args.environment}", file=sys.stderr)
             return 2
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", args.workload):
+        if not valid_name(args.workload):
             print("workload must match [a-z0-9][a-z0-9-]{1,62}", file=sys.stderr)
             return 2
         key = state["workload_key_pattern"].format(
             environment=args.environment,
             workload=args.workload,
+        )
+
+    else:
+        if not args.environment or not args.service or not args.request:
+            print("--environment, --service and --request are required for catalog scope", file=sys.stderr)
+            return 2
+        if args.environment not in env_contract.get("environments", {}):
+            print(f"unknown environment: {args.environment}", file=sys.stderr)
+            return 2
+        if not valid_name(args.service):
+            print("service must match [a-z0-9][a-z0-9-]{1,62}", file=sys.stderr)
+            return 2
+        if not valid_name(args.request):
+            print("request must match [a-z0-9][a-z0-9-]{1,62}", file=sys.stderr)
+            return 2
+        key = state["catalog_key_pattern"].format(
+            environment=args.environment,
+            service=args.service,
+            request=args.request,
         )
 
     lines = [
