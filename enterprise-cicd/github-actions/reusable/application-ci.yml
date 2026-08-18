@@ -1,0 +1,142 @@
+name: Reusable Application CI
+
+on:
+  workflow_call:
+    inputs:
+      application_definition:
+        description: Path to platform Application definition JSON.
+        required: true
+        type: string
+      acr_name:
+        description: Azure Container Registry name used for build and application images.
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve platform build profile
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/ci-scripts/common/resolve_application.py \
+            --application '${{ inputs.application_definition }}' \
+            --output /tmp/application-resolved.json
+
+          echo "application=$(jq -r .application /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "build_image=$(jq -r .buildImage /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "verify_command=$(jq -r .verifyCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "package_command=$(jq -r .packageCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "artifact_type=$(jq -r .artifactType /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "artifact_repository=$(jq -r .artifactRepository /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "dockerfile=$(jq -r .dockerfile /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        id: acr
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME"
+          LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: Compile and test in platform build image
+        shell: bash
+        env:
+          BUILD_IMAGE: ${{ steps.resolve.outputs.build_image }}
+          VERIFY_COMMAND: ${{ steps.resolve.outputs.verify_command }}
+          PACKAGE_COMMAND: ${{ steps.resolve.outputs.package_command }}
+          LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+        run: |
+          set -euo pipefail
+          IMAGE="$LOGIN_SERVER/build/$BUILD_IMAGE"
+          docker pull "$IMAGE"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            "$IMAGE" \
+            sh -lc "$VERIFY_COMMAND && $PACKAGE_COMMAND"
+
+      - name: Build immutable application image
+        if: steps.resolve.outputs.artifact_type == 'container'
+        shell: bash
+        env:
+          LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          REPOSITORY: ${{ steps.resolve.outputs.artifact_repository }}
+          DOCKERFILE: ${{ steps.resolve.outputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          IMAGE="$LOGIN_SERVER/$REPOSITORY:$GITHUB_SHA"
+          docker build --pull -f "$DOCKERFILE" -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Resolve immutable artifact digest
+        if: steps.resolve.outputs.artifact_type == 'container'
+        id: artifact
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.acr_name }}
+          REPOSITORY: ${{ steps.resolve.outputs.artifact_repository }}
+        run: |
+          set -euo pipefail
+          DIGEST=$(az acr repository show \
+            --name "$ACR_NAME" \
+            --image "$REPOSITORY:$GITHUB_SHA" \
+            --query digest -o tsv)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Emit release metadata
+        if: steps.resolve.outputs.artifact_type == 'container'
+        shell: bash
+        env:
+          APP: ${{ steps.resolve.outputs.application }}
+          REPOSITORY: ${{ steps.resolve.outputs.artifact_repository }}
+          LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          DIGEST: ${{ steps.artifact.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p .platform-release
+          jq -n \
+            --arg application "$APP" \
+            --arg sourceCommit "$GITHUB_SHA" \
+            --arg repository "$LOGIN_SERVER/$REPOSITORY" \
+            --arg digest "$DIGEST" \
+            '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,sourceCommit:$sourceCommit,artifact:{repository:$repository,digest:$digest}}' \
+            > .platform-release/artifact.json
+          cat .platform-release/artifact.json
+
+      - name: Upload release metadata
+        if: steps.resolve.outputs.artifact_type == 'container'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata-${{ github.sha }}
+          path: .platform-release/artifact.json
+          if-no-files-found: error
+          retention-days: 30
