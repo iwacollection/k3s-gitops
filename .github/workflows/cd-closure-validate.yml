@@ -9,6 +9,7 @@ on:
       - 'enterprise-cicd/testing/contracts/validate_cd_closure.py'
       - '.github/workflows/reusable-aks-observation-v1.yml'
       - '.github/workflows/reusable-release-verification-v1.yml'
+      - '.github/workflows/reusable-cd-post-deploy-v1.yml'
       - '.github/workflows/cd-closure-validate.yml'
   push:
     branches:
@@ -19,6 +20,7 @@ on:
       - 'enterprise-cicd/contracts/identity-contract.json'
       - '.github/workflows/reusable-aks-observation-v1.yml'
       - '.github/workflows/reusable-release-verification-v1.yml'
+      - '.github/workflows/reusable-cd-post-deploy-v1.yml'
 
 permissions:
   contents: read
@@ -51,8 +53,9 @@ jobs:
           set -euo pipefail
           observer=.github/workflows/reusable-aks-observation-v1.yml
           verifier=.github/workflows/reusable-release-verification-v1.yml
+          orchestrator=.github/workflows/reusable-cd-post-deploy-v1.yml
 
-          if grep -nE 'kubectl[[:space:]]+(apply|create|delete|patch|edit|scale)|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+update' "$observer" "$verifier"; then
+          if grep -nE 'kubectl[[:space:]]+(apply|create|delete|patch|edit|scale)|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+update' "$observer" "$verifier" "$orchestrator"; then
             echo 'CD observation/verification workflows must not directly mutate AKS.' >&2
             exit 1
           fi
@@ -63,3 +66,7 @@ jobs:
           grep -F 'gh pr create' "$verifier"
           grep -F 'rollbackBaseline' enterprise-cicd/promotion/render_rollback.py
           grep -F 'rebuildForbidden' enterprise-cicd/promotion/rollback/default.json
+
+          grep -F 'needs: observe' "$orchestrator"
+          grep -F 'reusable-aks-observation-v1.yml' "$orchestrator"
+          grep -F 'reusable-release-verification-v1.yml' "$orchestrator"
