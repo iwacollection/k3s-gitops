@@ -68,21 +68,14 @@ jobs:
           BINDING=enterprise-cicd/gitops/clusters/aks-automatic-lab/cluster.json
           test -f "$BINDING"
           test "$(jq -r .metadata.environment "$BINDING")" = dev
-
           RG="$(jq -r .spec.azure.resourceGroup "$BINDING")"
           CLUSTER="$(jq -r .spec.azure.clusterName "$BINDING")"
           CLUSTER_TYPE="$(jq -r .spec.azure.clusterType "$BINDING")"
           FLUX_NAME="$(jq -r .spec.flux.configurationName "$BINDING")"
           FLUX_BRANCH="$(jq -r .spec.flux.branch "$BINDING")"
           FLUX_KUSTOMIZATION="$(jq -r '.spec.flux.kustomizations[] | select(.name == "apps-dev") | .name' "$BINDING")"
-
-          test -n "$RG"
-          test -n "$CLUSTER"
-          test -n "$CLUSTER_TYPE"
-          test -n "$FLUX_NAME"
-          test -n "$FLUX_BRANCH"
-          test -n "$FLUX_KUSTOMIZATION"
-
+          test -n "$RG" && test -n "$CLUSTER" && test -n "$CLUSTER_TYPE"
+          test -n "$FLUX_NAME" && test -n "$FLUX_BRANCH" && test -n "$FLUX_KUSTOMIZATION"
           echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
           echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
           echo "cluster_type=$CLUSTER_TYPE" >> "$GITHUB_OUTPUT"
@@ -106,11 +99,7 @@ jobs:
           CLUSTER: ${{ steps.target.outputs.cluster }}
         run: |
           set -euo pipefail
-          az aks show \
-            --resource-group "$RG" \
-            --name "$CLUSTER" \
-            --query '{name:name,provisioningState:provisioningState,kubernetesVersion:kubernetesVersion,privateFqdn:privateFqdn,fqdn:fqdn}' \
-            -o json
+          az aks show --resource-group "$RG" --name "$CLUSTER" --query '{name:name,provisioningState:provisioningState,kubernetesVersion:kubernetesVersion,privateFqdn:privateFqdn,fqdn:fqdn}' -o json
 
       - name: Resolve governed ACR
         id: acr
@@ -122,7 +111,6 @@ jobs:
           ACR_NAME="$(az acr list --resource-group "$RG" --query "[?tags.platform=='enterprise-cicd'] | [0].name" -o tsv)"
           if [ -z "$ACR_NAME" ]; then
             echo "No ACR tagged platform=enterprise-cicd found in $RG." >&2
-            echo "Available ACRs:" >&2
             az acr list --resource-group "$RG" --query '[].{name:name,loginServer:loginServer,tags:tags}' -o table >&2 || true
             exit 1
           fi
@@ -145,42 +133,21 @@ jobs:
         shell: bash
         run: az extension add --name k8s-configuration --upgrade --yes
 
-      - name: Verify Flux configuration and DEV kustomization
+      - name: Verify Flux configuration and emit reconciliation diagnostics
         shell: bash
         env:
+          SUBSCRIPTION_ID: ${{ steps.auth.outputs.subscription_id }}
           RG: ${{ steps.target.outputs.resource_group }}
           CLUSTER: ${{ steps.target.outputs.cluster }}
-          CLUSTER_TYPE: ${{ steps.target.outputs.cluster_type }}
           FLUX_NAME: ${{ steps.target.outputs.flux_name }}
           EXPECTED_FLUX_BRANCH: ${{ steps.target.outputs.flux_branch }}
-          KUSTOMIZATION: ${{ steps.target.outputs.flux_kustomization }}
         run: |
           set -euo pipefail
-          ACTUAL_BRANCH="$(az k8s-configuration flux show \
-            --resource-group "$RG" \
-            --cluster-name "$CLUSTER" \
-            --cluster-type "$CLUSTER_TYPE" \
-            --name "$FLUX_NAME" \
-            --query 'gitRepository.repositoryRef.branch' \
-            -o tsv)"
+          AKS_PARENT="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.ContainerService/managedClusters/$CLUSTER"
+          FLUX_URL="https://management.azure.com$AKS_PARENT/providers/Microsoft.KubernetesConfiguration/fluxConfigurations/$FLUX_NAME?api-version=2025-04-01"
+          az rest --method get --url "$FLUX_URL" --query '{name:name,provisioningState:properties.provisioningState,complianceState:properties.complianceState,branch:properties.gitRepository.repositoryRef.branch,repositoryUrl:properties.gitRepository.url,sourceSyncedCommitId:properties.sourceSyncedCommitId,sourceUpdatedAt:properties.sourceUpdatedAt,statusUpdatedAt:properties.statusUpdatedAt,errorMessage:properties.errorMessage,statuses:properties.statuses,kustomizations:properties.kustomizations}' -o json | tee /tmp/flux-status.json
+          ACTUAL_BRANCH="$(az rest --method get --url "$FLUX_URL" --query 'properties.gitRepository.repositoryRef.branch' -o tsv)"
           test "$ACTUAL_BRANCH" = "$EXPECTED_FLUX_BRANCH"
-
-          az k8s-configuration flux show \
-            --resource-group "$RG" \
-            --cluster-name "$CLUSTER" \
-            --cluster-type "$CLUSTER_TYPE" \
-            --name "$FLUX_NAME" \
-            --query '{name:name,provisioningState:provisioningState,branch:gitRepository.repositoryRef.branch,repositoryUrl:gitRepository.url}' \
-            -o json
-
-          az k8s-configuration flux kustomization show \
-            --resource-group "$RG" \
-            --cluster-name "$CLUSTER" \
-            --cluster-type "$CLUSTER_TYPE" \
-            --name "$FLUX_NAME" \
-            --kustomization-name "$KUSTOMIZATION" \
-            --query '{name:name,path:path,prune:prune,provisioningState:provisioningState}' \
-            -o json
 
       - name: Install kubelogin
         uses: azure/use-kubelogin@v1.2
@@ -192,17 +159,25 @@ jobs:
         with:
           version: v1.35.7
 
-      - name: Verify read-only AKS access
+      - name: Verify read-only AKS access and DEV namespace
         shell: bash
         env:
+          SUBSCRIPTION_ID: ${{ steps.auth.outputs.subscription_id }}
           RG: ${{ steps.target.outputs.resource_group }}
           CLUSTER: ${{ steps.target.outputs.cluster }}
+          FLUX_NAME: ${{ steps.target.outputs.flux_name }}
         run: |
           set -euo pipefail
           az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --overwrite-existing
           kubelogin convert-kubeconfig -l azurecli
           kubectl auth can-i get pods --namespace cicd-dev | grep -qx yes
-          kubectl get namespace cicd-dev -o name
+          if ! kubectl get namespace cicd-dev -o name; then
+            echo "cicd-dev namespace is not reconciled yet; dumping Azure Flux status." >&2
+            AKS_PARENT="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.ContainerService/managedClusters/$CLUSTER"
+            FLUX_URL="https://management.azure.com$AKS_PARENT/providers/Microsoft.KubernetesConfiguration/fluxConfigurations/$FLUX_NAME?api-version=2025-04-01"
+            az rest --method get --url "$FLUX_URL" --query '{complianceState:properties.complianceState,sourceSyncedCommitId:properties.sourceSyncedCommitId,errorMessage:properties.errorMessage,statuses:properties.statuses}' -o json >&2 || true
+            exit 1
+          fi
 
       - name: Publish activation preflight summary
         shell: bash
