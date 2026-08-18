@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cicd-test
+  labels:
+    platform.cicd/environment: test
+    app.kubernetes.io/managed-by: flux
