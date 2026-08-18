@@ -1,0 +1,6 @@
+apiVersion: v2
+name: enterprise-cicd-smoke
+description: Minimal internal-only smoke workload for Azure enterprise CI/CD validation
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
