@@ -22,6 +22,14 @@ EXPECTED_VERSION_FILES = {
     "workloads/postgresql-flexible/versions.tf",
 }
 
+AZURERM_RUNTIME_WORKFLOWS = {
+    ".github/workflows/iac-request-dev-plan.yml",
+    ".github/workflows/iac-request-dev-apply.yml",
+    ".github/workflows/iac-dev-drift-detect.yml",
+    ".github/workflows/iac-decommission-dev-plan.yml",
+    ".github/workflows/iac-decommission-dev-apply.yml",
+}
+
 
 def fail(message: str) -> None:
     raise SystemExit(message)
@@ -60,9 +68,25 @@ def main() -> None:
                 f"{EXPECTED_AZURERM!r}; found={provider_version_lines}"
             )
 
+    for relative in sorted(AZURERM_RUNTIME_WORKFLOWS):
+        path = REPO / relative
+        if not path.is_file():
+            fail(f"missing AzureRM runtime workflow: {relative}")
+        text = path.read_text(encoding="utf-8")
+        if "ARM_SKIP_PROVIDER_REGISTRATION" in text:
+            fail(
+                f"{relative}: deprecated ARM_SKIP_PROVIDER_REGISTRATION is forbidden; "
+                "use ARM_RESOURCE_PROVIDER_REGISTRATIONS=none"
+            )
+        if "ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'" not in text:
+            fail(
+                f"{relative}: must disable automatic AzureRM provider registration "
+                "with ARM_RESOURCE_PROVIDER_REGISTRATIONS=none"
+            )
+
     print(
-        f"IaC provider pin contract valid: {len(EXPECTED_VERSION_FILES)} root stacks, "
-        f"AzureRM {EXPECTED_AZURERM}."
+        f"IaC provider/runtime contract valid: {len(EXPECTED_VERSION_FILES)} root stacks, "
+        f"AzureRM {EXPECTED_AZURERM}, {len(AZURERM_RUNTIME_WORKFLOWS)} workflows use the supported registration setting."
     )
 
 
