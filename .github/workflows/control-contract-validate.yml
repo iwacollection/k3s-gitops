@@ -8,10 +8,12 @@ on:
       - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
       - 'enterprise-cicd/iac-decommission/**'
+      - 'enterprise-cicd/iac-requests/dev/**.json'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
       - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_request_ownership.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
@@ -28,10 +30,12 @@ on:
       - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
       - 'enterprise-cicd/iac-decommission/**'
+      - 'enterprise-cicd/iac-requests/dev/**.json'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
       - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_request_ownership.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
@@ -70,6 +74,9 @@ jobs:
 
       - name: Exercise governed IaC decommission validator
         run: python enterprise-cicd/testing/contracts/test_iac_decommission_validator.py
+
+      - name: Validate exclusive Catalog resource-group ownership
+        run: python enterprise-cicd/testing/contracts/validate_iac_request_ownership.py
 
       - name: Test platform backend rendering
         env:
