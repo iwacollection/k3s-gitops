@@ -110,8 +110,8 @@ jobs:
           matrix=.github/workflows/reusable-application-ci-matrix-v2.yml
 
           grep -F 'needs: [resolve, source-scan, build-test]' "$dag"
+          grep -F 'needs: [resolve, image-build]' "$dag"
           grep -F 'needs: [resolve, image-build, image-scan, sbom]' "$dag"
-          grep -F 'needs: [resolve, image-build, image-scan, sbom, sign]' "$dag"
           grep -F 'needs: [resolve, build-test, image-build, image-scan, sbom, sign]' "$dag"
           grep -F 'strategy:' "$matrix"
           grep -F 'matrix:' "$matrix"
