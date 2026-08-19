@@ -3,8 +3,8 @@
   "kind": "InfrastructureRequest",
   "metadata": {
     "name": "platform-plan-reader-binding-e2e",
-    "owner": "platform-sre",
-    "application": "iac-v1-e2e"
+    "application": "iac-v1-e2e",
+    "owner": "platform-sre"
   },
   "spec": {
     "environment": "dev",
