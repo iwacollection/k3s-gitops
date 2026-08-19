@@ -21,10 +21,11 @@ def load(path: Path):
 def main() -> None:
     binding_path = ROOT / "contracts" / "iac-runtime-bindings.json"
     bootstrap_path = ROOT / "activation" / "iac" / "bootstrap-dev-iac-control-plane.sh"
+    network_capability_path = ROOT / "activation" / "iac" / "activate-dev-network-capability.sh"
     plan_workflow_path = REPO / ".github" / "workflows" / "iac-request-dev-plan.yml"
     apply_workflow_path = REPO / ".github" / "workflows" / "iac-request-dev-apply.yml"
 
-    for path in (binding_path, bootstrap_path, plan_workflow_path, apply_workflow_path):
+    for path in (binding_path, bootstrap_path, network_capability_path, plan_workflow_path, apply_workflow_path):
         require(path.is_file(), f"missing IaC control-plane file: {path.relative_to(REPO)}")
 
     binding = load(binding_path)
@@ -72,6 +73,17 @@ def main() -> None:
     require('b24988ac-6180-42a0-ab88-20f7382dd24c' not in bootstrap, "generic Contributor role ID is forbidden in IaC bootstrap")
     require('8e3af657-a8ff-443c-a75c-2fe8c4bcb635' not in bootstrap, "Owner role ID is forbidden for runtime IaC identities")
 
+    network_capability = network_capability_path.read_text(encoding="utf-8")
+    subprocess.run(["bash", "-n", str(network_capability_path)], check=True)
+    require('APPLY=0' in network_capability, "network capability activation must default to PLAN ONLY")
+    require('ROLE_NAME="Enterprise IaC Network DEV Apply"' in network_capability, "narrow DEV network capability role missing")
+    require('"Microsoft.Network/virtualNetworks/write"' in network_capability, "network capability must allow VNet writes")
+    require('"Microsoft.Network/virtualNetworks/subnets/write"' in network_capability, "network capability must allow subnet writes")
+    require('"Microsoft.Network/*"' not in network_capability, "broad Microsoft.Network wildcard is forbidden")
+    require('4d97b98b-1d4f-4787-a291-c67834d212e7' in network_capability, "Network Contributor role ID guard is missing")
+    for forbidden in ("publicIPAddresses/write", "natGateways/write", "virtualNetworkPeerings/write", "vpnGateways/write", "virtualNetworkGateways/write", "applicationGateways/write", "privateDnsZones/write"):
+        require(forbidden not in network_capability, f"paid/broad network write capability is forbidden: {forbidden}")
+
     plan_workflow = plan_workflow_path.read_text(encoding="utf-8")
     require('environment: iac-dev-plan' in plan_workflow, "PR Plan must use iac-dev-plan Environment")
     require("ARM_USE_OIDC: 'true'" in plan_workflow, "PR Plan must use OIDC")
@@ -89,15 +101,18 @@ def main() -> None:
     apply_workflow = apply_workflow_path.read_text(encoding="utf-8")
     require('environment: iac-dev-apply' in apply_workflow, "Apply must use iac-dev-apply Environment")
     require("ARM_USE_OIDC: 'true'" in apply_workflow, "Apply must use OIDC")
+    require("ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'" in apply_workflow, "Apply must disable automatic provider registration with the supported AzureRM setting")
     require('test "$STATE_WRITE" = true' in apply_workflow, "Apply must require state write binding")
     require('genericContributor' in apply_workflow and 'roleAssignmentWrite' in apply_workflow, "Apply binding privilege assertions missing")
     require('concurrency:' in apply_workflow and 'iac-dev-apply' in apply_workflow, "Apply must be serialized")
-    require("service != 'managed-identity'" in apply_workflow, "DEV Apply v1 must fail closed for unsupported services")
+    require("supported_services = {'managed-identity', 'network'}" in apply_workflow, "DEV Apply service capability allowlist changed")
     require("'delete' in x['actions']" in apply_workflow, "Apply must reject destructive plans")
     require('terraform destroy' not in apply_workflow, "automatic terraform destroy is forbidden")
     require('terraform -chdir="$STACK" apply' in apply_workflow, "Apply must execute the saved merge-time plan")
     require('/tmp/iac-apply/apply.tfplan' in apply_workflow, "Apply must use exact saved merge-time plan")
-    require('managed-identity-verification.json' in apply_workflow, "post-apply Azure verification evidence missing")
+    require('managed-identity-verification.json' in apply_workflow, "managed identity post-apply evidence missing")
+    require('network-verification.json' in apply_workflow and 'subnet-verification.json' in apply_workflow, "network post-apply Azure evidence missing")
+    require("'paidNetworkAddOnsDetected': False" in apply_workflow, "network verification must assert paid add-ons are absent")
 
     print("IaC control-plane security contract valid.")
 
