@@ -9,16 +9,16 @@
   },
   "environments": {
     "dev": {
-      "activationStatus": "pending-bootstrap",
+      "activationStatus": "ready",
       "plan": {
         "principalType": "UserAssignedManagedIdentity",
         "identityName": "k3s-gitops-iac-plan-dev-uami",
         "githubEnvironment": "iac-dev-plan",
         "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
         "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
-        "clientId": null,
-        "principalId": null,
-        "resourceId": null,
+        "clientId": "514af1f4-0e13-45a4-b54e-a04d0417aa08",
+        "principalId": "07eecd2b-7069-4e9a-9731-2e0875834295",
+        "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/rg-platform-cicd/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k3s-gitops-iac-plan-dev-uami",
         "stateWriteAccess": false
       },
       "apply": {
@@ -27,9 +27,9 @@
         "githubEnvironment": "iac-dev-apply",
         "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
         "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
-        "clientId": null,
-        "principalId": null,
-        "resourceId": null,
+        "clientId": "b2c3ee6b-909b-4366-abca-40b018e4e5c8",
+        "principalId": "d71f3fb7-b6ab-41f8-a48e-1970ee182c06",
+        "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/rg-platform-cicd/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k3s-gitops-iac-apply-dev-uami",
         "stateWriteAccess": true,
         "genericContributor": false,
         "roleAssignmentWrite": false
