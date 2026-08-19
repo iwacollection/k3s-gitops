@@ -114,7 +114,9 @@ def main() -> None:
     require('BRANCH="gitops/test"' in flux_bootstrap, "TEST Flux bootstrap must target gitops/test")
     require('KUSTOMIZATION_NAME="apps-test"' in flux_bootstrap, "TEST Flux must reconcile apps-test")
     require("az rest --method put" in flux_bootstrap, "TEST Flux bootstrap must support old CLI through ARM REST")
-    require("gitops/infrastructure" not in flux_bootstrap, "TEST logical Flux must not duplicate shared infrastructure")
+    body_lines = [line for line in flux_bootstrap.splitlines() if line.strip().startswith("BODY=")]
+    require(body_lines, "TEST Flux ARM request body is missing")
+    require("gitops/infrastructure" not in "\n".join(body_lines), "TEST logical Flux request must not duplicate shared infrastructure")
 
     print("GitOps platform contracts validated.")
 
