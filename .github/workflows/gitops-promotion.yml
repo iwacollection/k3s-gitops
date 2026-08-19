@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate and stage real release request
+      - name: Validate release request and immutable promotion lineage
         id: request
         shell: bash
         env:
@@ -49,18 +49,64 @@ jobs:
               exit 1
               ;;
           esac
+
           test -f "$REQUEST"
+          test "$(jq -r .apiVersion "$REQUEST")" = "platform.release/v1"
+          test "$(jq -r .kind "$REQUEST")" = "Release"
+
           DIGEST="$(jq -r .spec.artifactDigest "$REQUEST")"
+          REPOSITORY="$(jq -r .spec.artifactRepository "$REQUEST")"
+          FROM="$(jq -r .spec.from "$REQUEST")"
           ENVIRONMENT="$(jq -r .spec.to "$REQUEST")"
           APPLICATION="$(jq -r .metadata.application "$REQUEST")"
           PROFILE="$(jq -r .spec.releaseProfile "$REQUEST")"
+          SOURCE_REQUEST="$(jq -r '.spec.sourceReleaseRequest // empty' "$REQUEST")"
+
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          case "${FROM}->${ENVIRONMENT}" in
+            build->dev|dev->test|test->prod) ;;
+            *) echo "Unsupported promotion transition: ${FROM}->${ENVIRONMENT}" >&2; exit 1 ;;
+          esac
+
           case "$ENVIRONMENT" in
             dev) BASE_BRANCH="gitops/dev" ;;
             test) BASE_BRANCH="gitops/test" ;;
             prod) BASE_BRANCH="gitops/prod" ;;
             *) echo "Unsupported environment: $ENVIRONMENT" >&2; exit 1 ;;
           esac
+
+          if [[ "$FROM" == "build" ]]; then
+            if [[ -n "$SOURCE_REQUEST" ]]; then
+              echo "build->dev must not declare sourceReleaseRequest." >&2
+              exit 1
+            fi
+          else
+            case "$SOURCE_REQUEST" in
+              enterprise-cicd/release-requests/*.example.json|"")
+                echo "${FROM}->${ENVIRONMENT} requires a real sourceReleaseRequest." >&2
+                exit 1
+                ;;
+              enterprise-cicd/release-requests/*.json) ;;
+              *) echo "Invalid sourceReleaseRequest path: $SOURCE_REQUEST" >&2; exit 1 ;;
+            esac
+
+            test -f "$SOURCE_REQUEST"
+            SOURCE_APP="$(jq -r .metadata.application "$SOURCE_REQUEST")"
+            SOURCE_TO="$(jq -r .spec.to "$SOURCE_REQUEST")"
+            SOURCE_REPOSITORY="$(jq -r .spec.artifactRepository "$SOURCE_REQUEST")"
+            SOURCE_DIGEST="$(jq -r .spec.artifactDigest "$SOURCE_REQUEST")"
+
+            test "$SOURCE_APP" = "$APPLICATION"
+            test "$SOURCE_TO" = "$FROM"
+            test "$SOURCE_REPOSITORY" = "$REPOSITORY"
+            test "$SOURCE_DIGEST" = "$DIGEST"
+
+            echo "Immutable lineage verified: ${SOURCE_REQUEST} -> ${REQUEST}"
+            echo "Repository: ${REPOSITORY}"
+            echo "Digest: ${DIGEST}"
+          fi
+
           cp "$REQUEST" /tmp/release-request.json
           echo "application=$APPLICATION" >> "$GITHUB_OUTPUT"
           echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
