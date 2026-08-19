@@ -68,11 +68,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Render standard developer IaC requests
+      - name: Render standard catalog examples and every submitted IaC request
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/iac-rendered
+
+          # Platform-owned catalog examples prove every exposed renderer remains valid.
           python enterprise-cicd/iac-catalog/render_request.py \
             --request enterprise-cicd/iac-requests/dev/payment-acr.example.json \
             --name-prefix plat \
@@ -102,6 +104,50 @@ jobs:
           assert pg['delegated_subnet_name'] == 'snet-postgresql'
           print('Seven IaC catalog renderers are valid.')
           PY
+
+          # Every request checked into iac-requests is a governed API object, not opaque JSON.
+          # The directory is an authorization boundary: dev/ requests must declare dev, etc.
+          request_count=0
+          while IFS= read -r request; do
+            request_count=$((request_count + 1))
+            directory_environment="$(basename "$(dirname "$request")")"
+            declared_environment="$(python - "$request" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding='utf-8') as fh:
+              print(json.load(fh).get('spec', {}).get('environment', ''))
+          PY
+          )"
+
+            if [ "$directory_environment" != "$declared_environment" ]; then
+              echo "IaC request environment mismatch: path=$directory_environment spec=$declared_environment file=$request" >&2
+              exit 1
+            fi
+
+            output="/tmp/iac-rendered/submitted-${request_count}.json"
+            extra_args=()
+            if [ "$(python - "$request" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding='utf-8') as fh:
+              print((json.load(fh).get('spec') or {}).get('service', ''))
+          PY
+          )" = "acr" ]; then
+              extra_args=(--name-prefix plat)
+            fi
+
+            echo "Validating governed IaC request: $request"
+            python enterprise-cicd/iac-catalog/render_request.py \
+              --request "$request" \
+              --output "$output" \
+              "${extra_args[@]}"
+          done < <(find enterprise-cicd/iac-requests -mindepth 2 -maxdepth 2 -type f -name '*.json' | sort)
+
+          if [ "$request_count" -eq 0 ]; then
+            echo 'No IaC request manifests were discovered.' >&2
+            exit 1
+          fi
+          echo "Validated $request_count submitted IaC request manifest(s)."
 
   policy-contracts:
     needs: fmt
