@@ -16,12 +16,15 @@ on:
       - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_request_ownership.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_apply_coverage.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_real_plan_coverage.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-request-test-prod-apply.yml'
       - '.github/workflows/iac-request-protected-capability-apply.yml'
       - '.github/workflows/iac-request-workload-capability-apply.yml'
       - '.github/workflows/iac-request-apply.yml'
+      - '.github/workflows/iac-active-catalog-real-plan.yml'
+      - '.github/workflows/iac-platform-foundation.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
       - '.github/workflows/iac-dev-retirement-guard.yml'
       - '.github/workflows/iac-decommission-dev-plan.yml'
@@ -44,12 +47,15 @@ on:
       - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_request_ownership.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_apply_coverage.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_real_plan_coverage.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-request-test-prod-apply.yml'
       - '.github/workflows/iac-request-protected-capability-apply.yml'
       - '.github/workflows/iac-request-workload-capability-apply.yml'
       - '.github/workflows/iac-request-apply.yml'
+      - '.github/workflows/iac-active-catalog-real-plan.yml'
+      - '.github/workflows/iac-platform-foundation.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
       - '.github/workflows/iac-dev-retirement-guard.yml'
       - '.github/workflows/iac-decommission-dev-plan.yml'
@@ -62,74 +68,66 @@ permissions:
 jobs:
   validate-contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Validate control contracts
         run: python enterprise-cicd/contracts/validate_contracts.py
-
       - name: Validate IaC control-plane security boundaries
         run: python enterprise-cicd/testing/contracts/validate_iac_control_plane.py
-
       - name: Validate IaC provider pins
         run: python enterprise-cicd/testing/contracts/validate_iac_provider_pins.py
-
       - name: Validate governed IaC decommission boundaries
         run: python enterprise-cicd/testing/contracts/validate_iac_decommission.py
-
       - name: Exercise governed IaC decommission validator
         run: python enterprise-cicd/testing/contracts/test_iac_decommission_validator.py
-
       - name: Validate exclusive Catalog resource-group ownership
         run: python enterprise-cicd/testing/contracts/validate_iac_request_ownership.py
-
       - name: Require Apply coverage for every active Catalog
         run: python enterprise-cicd/testing/contracts/validate_iac_apply_coverage.py
-
-      - name: Test platform backend rendering
+      - name: Require real Plan coverage for every active Catalog
+        run: python enterprise-cicd/testing/contracts/validate_iac_real_plan_coverage.py
+      - name: Test global platform backend rendering
         env:
           TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
         run: |
           python enterprise-cicd/terraform/state/render_backend.py \
-            --scope platform \
-            --stack identity \
-            --auth oidc \
-            --output /tmp/platform-backend.hcl
+            --scope platform --stack identity --auth oidc --output /tmp/platform-backend.hcl
           grep -F 'key                  = "platform/identity.tfstate"' /tmp/platform-backend.hcl
           grep -F 'use_oidc             = true' /tmp/platform-backend.hcl
-
+      - name: Test environment-scoped platform foundation backend rendering
+        env:
+          TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
+        run: |
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope platform --stack connectivity --environment dev --auth oidc --output /tmp/connectivity-backend.hcl
+          grep -F 'key                  = "platform/dev/connectivity.tfstate"' /tmp/connectivity-backend.hcl
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope platform --stack observability --environment test --auth oidc --output /tmp/observability-backend.hcl
+          grep -F 'key                  = "platform/test/observability.tfstate"' /tmp/observability-backend.hcl
+          if python enterprise-cicd/terraform/state/render_backend.py --scope platform --stack connectivity --auth oidc --output /tmp/invalid.hcl; then
+            echo 'environment-scoped platform state must require --environment' >&2
+            exit 1
+          fi
       - name: Test workload backend rendering
         env:
           TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
         run: |
           python enterprise-cicd/terraform/state/render_backend.py \
-            --scope workload \
-            --environment dev \
-            --workload payment \
-            --auth oidc \
-            --output /tmp/workload-backend.hcl
+            --scope workload --environment dev --workload payment --auth oidc --output /tmp/workload-backend.hcl
           grep -F 'key                  = "workload/dev/payment.tfstate"' /tmp/workload-backend.hcl
-
       - name: Test catalog request backend rendering
         env:
           TFSTATE_STORAGE_ACCOUNT: sttfstatecontracttest001
         run: |
           python enterprise-cicd/terraform/state/render_backend.py \
-            --scope catalog \
-            --environment dev \
-            --service acr \
-            --request payment-acr \
-            --auth oidc \
-            --output /tmp/catalog-backend.hcl
+            --scope catalog --environment dev --service acr --request payment-acr --auth oidc --output /tmp/catalog-backend.hcl
           grep -F 'key                  = "catalog/dev/acr/payment-acr.tfstate"' /tmp/catalog-backend.hcl
-
       - name: Verify no Terraform state is tracked
         shell: bash
         run: |
@@ -138,7 +136,6 @@ jobs:
             echo 'Terraform state file is tracked by Git.' >&2
             exit 1
           fi
-
       - name: Verify no committed backend runtime file
         shell: bash
         run: |
