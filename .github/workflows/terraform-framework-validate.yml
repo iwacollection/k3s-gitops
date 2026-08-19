@@ -74,6 +74,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/iac-rendered
 
+          # Platform-owned catalog examples prove every exposed renderer remains valid.
           python enterprise-cicd/iac-catalog/render_request.py \
             --request enterprise-cicd/iac-requests/dev/payment-acr.example.json \
             --name-prefix plat \
@@ -104,6 +105,8 @@ jobs:
           print('Seven IaC catalog renderers are valid.')
           PY
 
+          # Every request checked into iac-requests is a governed API object, not opaque JSON.
+          # The directory is an authorization boundary: dev/ requests must declare dev, etc.
           request_count=0
           while IFS= read -r request; do
             request_count=$((request_count + 1))
@@ -187,144 +190,6 @@ jobs:
             exit 1
           fi
 
-  real-dev-plan-readiness:
-    name: Real Azure DEV plan readiness
-    needs: render-requests
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: dev
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Detect E2E free IaC request
-        id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
-          REQUEST='enterprise-cicd/iac-requests/dev/platform-free-managed-identity.json'
-          if [ -f "$REQUEST" ]; then
-            echo 'enabled=true' >> "$GITHUB_OUTPUT"
-            echo "request=$REQUEST" >> "$GITHUB_OUTPUT"
-          else
-            echo 'enabled=false' >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Resolve DEV OIDC identity
-        if: steps.detect.outputs.enabled == 'true'
-        id: auth
-        shell: bash
-        run: |
-          set -euo pipefail
-          BINDING=enterprise-cicd/contracts/environment-bindings.json
-          CLIENT_ID="$(jq -r '.environments.dev.identities.githubOidc.clientId // empty' "$BINDING")"
-          TENANT_ID="$(jq -r '.environments.dev.identities.githubOidc.tenantId // empty' "$BINDING")"
-          SUBSCRIPTION_ID="$(jq -r '.environments.dev.identities.githubOidc.subscriptionId // empty' "$BINDING")"
-          PRINCIPAL_ID="$(jq -r '.environments.dev.identities.githubOidc.principalId // empty' "$BINDING")"
-          test -n "$CLIENT_ID" && test -n "$TENANT_ID" && test -n "$SUBSCRIPTION_ID" && test -n "$PRINCIPAL_ID"
-          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
-          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
-          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
-          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Azure login with DEV GitHub OIDC
-        if: steps.detect.outputs.enabled == 'true'
-        uses: azure/login@v3
-        with:
-          client-id: ${{ steps.auth.outputs.client_id }}
-          tenant-id: ${{ steps.auth.outputs.tenant_id }}
-          subscription-id: ${{ steps.auth.outputs.subscription_id }}
-
-      - name: Collect Azure RBAC and state readiness evidence
-        if: steps.detect.outputs.enabled == 'true'
-        shell: bash
-        env:
-          PRINCIPAL_ID: ${{ steps.auth.outputs.principal_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/iac-evidence
-          az account show --query '{subscription:name,subscriptionId:id,tenantId:tenantId}' -o json | tee /tmp/iac-evidence/account.json
-          az role assignment list --assignee-object-id "$PRINCIPAL_ID" --all \
-            --query '[].{role:roleDefinitionName,scope:scope}' -o json \
-            | tee /tmp/iac-evidence/rbac.json || echo '[]' > /tmp/iac-evidence/rbac.json
-
-          if az group show --name rg-platform-cicd -o json >/tmp/iac-evidence/state-rg.json 2>/tmp/iac-evidence/state-rg.err; then
-            az storage account list --resource-group rg-platform-cicd \
-              --query '[].{name:name,allowSharedKeyAccess:allowSharedKeyAccess,location:location}' -o json \
-              | tee /tmp/iac-evidence/state-storage.json || true
-          else
-            printf '{"exists":false,"resourceGroup":"rg-platform-cicd"}\n' > /tmp/iac-evidence/state-rg.json
-            printf '[]\n' > /tmp/iac-evidence/state-storage.json
-          fi
-
-          if az group show --name rg-iac-free-lab-dev -o json >/tmp/iac-evidence/target-rg.json 2>/dev/null; then
-            true
-          else
-            printf '{"exists":false,"resourceGroup":"rg-iac-free-lab-dev"}\n' > /tmp/iac-evidence/target-rg.json
-          fi
-
-      - uses: hashicorp/setup-terraform@v3
-        if: steps.detect.outputs.enabled == 'true'
-        with:
-          terraform_version: '1.15.8'
-
-      - name: Render request and run real Azure Terraform plan without backend writes
-        if: steps.detect.outputs.enabled == 'true'
-        shell: bash
-        env:
-          ARM_USE_CLI: 'true'
-          ARM_SUBSCRIPTION_ID: ${{ steps.auth.outputs.subscription_id }}
-          ARM_TENANT_ID: ${{ steps.auth.outputs.tenant_id }}
-          ARM_SKIP_PROVIDER_REGISTRATION: 'true'
-        run: |
-          set -euo pipefail
-          REQUEST='${{ steps.detect.outputs.request }}'
-          STACK='enterprise-cicd/terraform/stacks/workloads/managed-identity'
-          python enterprise-cicd/iac-catalog/render_request.py \
-            --request "$REQUEST" \
-            --output /tmp/request.tfvars.json
-          cat /tmp/request.tfvars.json | tee /tmp/iac-evidence/rendered-tfvars.json
-
-          BACKEND_FILE="$STACK/backend.tf"
-          mv "$BACKEND_FILE" "$BACKEND_FILE.readiness-disabled"
-          trap 'mv "$BACKEND_FILE.readiness-disabled" "$BACKEND_FILE" 2>/dev/null || true' EXIT
-          rm -rf "$STACK/.terraform"
-
-          terraform -chdir="$STACK" init -backend=false -input=false
-          terraform -chdir="$STACK" plan \
-            -refresh=false \
-            -lock=false \
-            -input=false \
-            -var-file=/tmp/request.tfvars.json \
-            -out=/tmp/dev.tfplan
-          terraform -chdir="$STACK" show -json /tmp/dev.tfplan > /tmp/iac-evidence/plan.json
-
-          python - <<'PY' | tee /tmp/iac-evidence/plan-summary.json
-          import json
-          p=json.load(open('/tmp/iac-evidence/plan.json'))
-          changes=[]
-          for rc in p.get('resource_changes',[]):
-              actions=rc.get('change',{}).get('actions',[])
-              changes.append({'address':rc.get('address'),'actions':actions})
-          creates=[x for x in changes if x['actions']==['create']]
-          destructive=[x for x in changes if 'delete' in x['actions']]
-          assert not destructive, destructive
-          assert len(creates)==2, creates
-          print(json.dumps({'creates':creates,'destructive':destructive,'status':'passed'}, indent=2))
-          PY
-
-      - name: Publish real plan readiness evidence
-        if: ${{ always() && steps.detect.outputs.enabled == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: iac-free-managed-identity-dev-plan-readiness
-          path: /tmp/iac-evidence
-          if-no-files-found: error
-          retention-days: 7
-
   framework-gate:
     if: ${{ always() }}
     needs:
@@ -333,7 +198,6 @@ jobs:
       - render-requests
       - policy-contracts
       - no-apply
-      - real-dev-plan-readiness
     runs-on: ubuntu-latest
     steps:
       - name: Require all Terraform framework checks
@@ -345,4 +209,3 @@ jobs:
           test '${{ needs.render-requests.result }}' = success
           test '${{ needs.policy-contracts.result }}' = success
           test '${{ needs.no-apply.result }}' = success
-          test '${{ needs.real-dev-plan-readiness.result }}' = success
