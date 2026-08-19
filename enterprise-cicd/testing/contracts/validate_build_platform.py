@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,9 +82,94 @@ def main() -> int:
         fail(errors, "shared writable build workspaces must remain forbidden")
     if dependency["rules"].get("cacheIsOptimizationNotSourceOfTruth") is not True:
         fail(errors, "dependency cache must not become source of truth")
+    if dependency["rules"].get("cacheSharedByLockHashOnly") is not True:
+        fail(errors, "dependency cache sharing must remain governed by build profile/toolchain and lock inputs")
+
+    resolver_path = ROOT / "ci-scripts" / "common" / "resolve_application.py"
+    prepare_path = ROOT / "ci-scripts" / "common" / "prepare_build_env.py"
+    resolver_text = resolver_path.read_text(encoding="utf-8")
+    prepare_text = prepare_path.read_text(encoding="utf-8")
+    for required in (
+        "safe_relative_path",
+        "application sourcePath does not exist",
+        "artifact dockerfile escapes application sourcePath",
+        "unsafe artifact repository name",
+    ):
+        require_text(errors, resolver_text, required, f"application resolver missing source-boundary control: {required}")
+    for required in (
+        "image_metadata",
+        "json.dumps(profile, sort_keys=True",
+        "json.dumps(image_metadata, sort_keys=True",
+        'cacheRestorePrefix',
+        'cache_prefix = f"platform-ci-{safe_name(profile_name)}-"',
+    ):
+        require_text(errors, prepare_text, required, f"build cache helper missing toolchain/profile isolation control: {required}")
+
+    smoke_application = ROOT / "application-definitions" / "platform-smoke-api.json"
+    if smoke_application.is_file():
+        with tempfile.TemporaryDirectory(prefix="build-platform-contract-") as tmp:
+            tmpdir = Path(tmp)
+            resolved_path = tmpdir / "resolved.json"
+            prepared_path = tmpdir / "prepared.json"
+            env_path = tmpdir / "build.env"
+            config_dir = tmpdir / "config"
+            cache_root = tmpdir / "cache"
+            try:
+                subprocess.run(
+                    [
+                        "python",
+                        str(resolver_path),
+                        "--application",
+                        str(smoke_application),
+                        "--output",
+                        str(resolved_path),
+                    ],
+                    cwd=REPO_ROOT,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                resolved = load(resolved_path)
+                if resolved.get("sourcePath") != "enterprise-cicd/testing/e2e/platform-smoke-api":
+                    fail(errors, f"smoke Application sourcePath resolved incorrectly: {resolved.get('sourcePath')}")
+                source_dir = REPO_ROOT / resolved["sourcePath"]
+                if not (source_dir / resolved["dockerfile"]).is_file():
+                    fail(errors, "resolved container Dockerfile is not inside the Application sourcePath")
+
+                env = dict(os.environ)
+                env["PLATFORM_CACHE_ROOT"] = str(cache_root)
+                subprocess.run(
+                    [
+                        "python",
+                        str(prepare_path),
+                        "--application",
+                        str(smoke_application),
+                        "--workspace",
+                        str(source_dir),
+                        "--output",
+                        str(prepared_path),
+                        "--env-file",
+                        str(env_path),
+                        "--config-dir",
+                        str(config_dir),
+                    ],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                prepared = load(prepared_path)
+                if prepared.get("cacheRestorePrefix") != "platform-ci-python-python-uv-v1-":
+                    fail(errors, f"cache restore prefix is not build-profile scoped: {prepared.get('cacheRestorePrefix')}")
+                if not str(prepared.get("cacheKey", "")).startswith(prepared.get("cacheRestorePrefix", "__missing__")):
+                    fail(errors, "exact cache key must be nested under its profile-scoped restore prefix")
+            except subprocess.CalledProcessError as exc:
+                fail(errors, f"smoke application resolver/cache contract failed: stdout={exc.stdout} stderr={exc.stderr}")
 
     reusable_path = REPO_ROOT / ".github" / "workflows" / "reusable-application-ci-v1.yml"
     matrix_path = REPO_ROOT / ".github" / "workflows" / "reusable-application-ci-matrix-v1.yml"
+    legacy_path = REPO_ROOT / ".github" / "workflows" / "enterprise-ci-reusable.yml"
     if not reusable_path.is_file():
         fail(errors, "callable reusable application CI workflow is missing")
     else:
@@ -112,8 +200,19 @@ def main() -> int:
             "--provenance=mode=max",
             "cosign sign --yes",
             "GITHUB_SHA",
+            "source_path: ${{ steps.resolve.outputs.source_path }}",
+            "scan-ref: ${{ needs.resolve.outputs.source_path }}",
+            "--workspace '${{ needs.resolve.outputs.source_path }}'",
+            "cache_restore_prefix=$(jq -r .cacheRestorePrefix",
+            "${{ steps.prepare.outputs.cache_restore_prefix }}",
+            '-v "$source_dir:/workspace"',
+            'tar -C "$source_dir" -czf /tmp/build-workspace.tgz .',
+            "mkdir -p /tmp/application-source",
+            '"$source_dir"',
         ):
-            require_text(errors, reusable, required, f"reusable CI missing required supply-chain/DAG control: {required}")
+            require_text(errors, reusable, required, f"reusable CI missing required supply-chain/source/cache control: {required}")
+        if "${{ runner.os }}-${{ runner.arch }}-platform-ci-\n" in reusable:
+            fail(errors, "dependency cache restore fallback must not be global across build profiles")
 
     if not matrix_path.is_file():
         fail(errors, "matrix reusable CI orchestrator is missing")
@@ -129,6 +228,16 @@ def main() -> int:
             "max-parallel: 4",
         ):
             require_text(errors, matrix, required, f"matrix orchestration missing required control: {required}")
+
+    if not legacy_path.is_file():
+        fail(errors, "deprecated enterprise CI compatibility workflow is missing")
+    else:
+        legacy = legacy_path.read_text(encoding="utf-8")
+        require_text(errors, legacy, "enterprise-ci-reusable-deprecated", "legacy CI entrypoint must remain visibly deprecated")
+        require_text(errors, legacy, "Reject deprecated arbitrary-command CI entrypoint", "legacy CI must fail closed")
+        require_text(errors, legacy, "exit 1", "legacy arbitrary-command workflow must reject execution")
+        if "${{ inputs.build_command }}" in legacy:
+            fail(errors, "legacy caller-supplied build_command must never be executed")
 
     consumption_policy = load(ROOT / "github-actions" / "policies" / "reusable-workflow-consumption.json")
     policy = consumption_policy["spec"]
@@ -165,7 +274,9 @@ def main() -> int:
     print("orchestration: matrix outside; needs DAG inside reusable workflow")
     print("consumption: thin callers; platform workflow pinned by immutable release ref")
     print("security: source + container controls required before signing")
-    print("cache: lock/profile scoped; shared writable workspace forbidden")
+    print("monorepo: source scan/build/package/container context isolated by Application sourcePath")
+    print("cache: profile + toolchain metadata + lock inputs; fallback cannot cross build profiles")
+    print("legacy arbitrary-command reusable entrypoint: fail-closed")
     return 0
 
 
