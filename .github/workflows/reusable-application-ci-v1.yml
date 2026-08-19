@@ -123,6 +123,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      build_image_digest: ${{ steps.prepare.outputs.build_image_digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -143,6 +145,7 @@ jobs:
             --output /tmp/platform-build.json \
             --env-file /tmp/platform-build.env \
             --config-dir /tmp/platform-config
+          echo "build_image_digest=$(jq -r .buildImageDigest /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "cache_key=$(jq -r .cacheKey /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "cache_restore_prefix=$(jq -r .cacheRestorePrefix /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "cache_dir=$(jq -r .cacheDir /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
@@ -174,11 +177,12 @@ jobs:
           login_server=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
           echo "login_server=$login_server" >> "$GITHUB_OUTPUT"
 
-      - name: Compile, test and package in platform build image
+      - name: Compile, test and package in immutable platform build image
         shell: bash
         env:
           SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
           BUILD_IMAGE: ${{ needs.resolve.outputs.build_image }}
+          BUILD_IMAGE_DIGEST: ${{ steps.prepare.outputs.build_image_digest }}
           PREPARE_COMMAND: ${{ needs.resolve.outputs.prepare_command }}
           VERIFY_COMMAND: ${{ needs.resolve.outputs.verify_command }}
           PACKAGE_COMMAND: ${{ needs.resolve.outputs.package_command }}
@@ -189,7 +193,9 @@ jobs:
           set -euo pipefail
           source_dir="$GITHUB_WORKSPACE/$SOURCE_PATH"
           test -d "$source_dir"
-          image="$LOGIN_SERVER/build/$BUILD_IMAGE"
+          image_name="${BUILD_IMAGE%:*}"
+          case "$BUILD_IMAGE_DIGEST" in sha256:*) ;; *) echo "invalid build image digest: $BUILD_IMAGE_DIGEST" >&2; exit 1 ;; esac
+          image="$LOGIN_SERVER/build/$image_name@$BUILD_IMAGE_DIGEST"
           docker pull "$image"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -395,7 +401,7 @@ jobs:
         run: cosign sign --yes "$IMAGE"
 
   release-evidence:
-    needs: [resolve, image-build, image-scan, sbom, sign]
+    needs: [resolve, build-test, image-build, image-scan, sbom, sign]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -412,6 +418,8 @@ jobs:
         env:
           APP: ${{ needs.resolve.outputs.application }}
           OWNER: ${{ needs.resolve.outputs.owner }}
+          BUILD_IMAGE: ${{ needs.resolve.outputs.build_image }}
+          BUILD_IMAGE_DIGEST: ${{ needs.build-test.outputs.build_image_digest }}
           REPOSITORY: ${{ needs.image-build.outputs.login_server }}/${{ needs.resolve.outputs.artifact_repository }}
           DIGEST: ${{ needs.image-build.outputs.artifact_digest }}
         run: |
@@ -420,9 +428,11 @@ jobs:
             --arg application "$APP" \
             --arg owner "$OWNER" \
             --arg sourceCommit "$GITHUB_SHA" \
+            --arg buildImage "$BUILD_IMAGE" \
+            --arg buildImageDigest "$BUILD_IMAGE_DIGEST" \
             --arg repository "$REPOSITORY" \
             --arg digest "$DIGEST" \
-            '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,owner:$owner,sourceCommit:$sourceCommit,artifact:{repository:$repository,digest:$digest},evidence:{sbom:"sbom.spdx.json",signed:true,provenance:true,sourceScan:true,containerScan:true}}' \
+            '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,owner:$owner,sourceCommit:$sourceCommit,builder:{image:$buildImage,digest:$buildImageDigest},artifact:{repository:$repository,digest:$digest},evidence:{sbom:"sbom.spdx.json",signed:true,provenance:true,sourceScan:true,containerScan:true}}' \
             > .platform-release/artifact.json
           cat .platform-release/artifact.json
 
