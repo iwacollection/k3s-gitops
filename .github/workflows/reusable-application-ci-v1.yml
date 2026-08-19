@@ -47,6 +47,7 @@ jobs:
     outputs:
       application: ${{ steps.resolve.outputs.application }}
       owner: ${{ steps.resolve.outputs.owner }}
+      source_path: ${{ steps.resolve.outputs.source_path }}
       build_image: ${{ steps.resolve.outputs.build_image }}
       prepare_command: ${{ steps.resolve.outputs.prepare_command }}
       verify_command: ${{ steps.resolve.outputs.verify_command }}
@@ -85,6 +86,7 @@ jobs:
 
           echo "application=$(jq -r .application /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "owner=$(jq -r .owner /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
+          echo "source_path=$(jq -r .sourcePath /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "build_image=$(jq -r .buildImage /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "prepare_command=$(jq -r .prepareCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
           echo "verify_command=$(jq -r .verifyCommand /tmp/application-resolved.json)" >> "$GITHUB_OUTPUT"
@@ -107,7 +109,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.36.0
         with:
           scan-type: fs
-          scan-ref: .
+          scan-ref: ${{ needs.resolve.outputs.source_path }}
           scanners: vuln,secret,misconfig
           format: table
           exit-code: '1'
@@ -137,21 +139,22 @@ jobs:
           set -euo pipefail
           python enterprise-cicd/ci-scripts/common/prepare_build_env.py \
             --application '${{ inputs.application_definition }}' \
-            --workspace . \
+            --workspace '${{ needs.resolve.outputs.source_path }}' \
             --output /tmp/platform-build.json \
             --env-file /tmp/platform-build.env \
             --config-dir /tmp/platform-config
           echo "cache_key=$(jq -r .cacheKey /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+          echo "cache_restore_prefix=$(jq -r .cacheRestorePrefix /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "cache_dir=$(jq -r .cacheDir /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "pre_command=$(jq -r .preCommand /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore platform dependency cache
+      - name: Restore profile-scoped dependency cache
         uses: actions/cache@v4
         with:
           path: ${{ steps.prepare.outputs.cache_dir }}
           key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.cache_key }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-platform-ci-
+            ${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.cache_restore_prefix }}
 
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -174,6 +177,7 @@ jobs:
       - name: Compile, test and package in platform build image
         shell: bash
         env:
+          SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
           BUILD_IMAGE: ${{ needs.resolve.outputs.build_image }}
           PREPARE_COMMAND: ${{ needs.resolve.outputs.prepare_command }}
           VERIFY_COMMAND: ${{ needs.resolve.outputs.verify_command }}
@@ -183,26 +187,29 @@ jobs:
           LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
         run: |
           set -euo pipefail
+          source_dir="$GITHUB_WORKSPACE/$SOURCE_PATH"
+          test -d "$source_dir"
           image="$LOGIN_SERVER/build/$BUILD_IMAGE"
           docker pull "$image"
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --env-file /tmp/platform-build.env \
-            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$source_dir:/workspace" \
             -v "$CACHE_DIR:/platform-cache" \
             -v "/tmp/platform-config:/platform-config:ro" \
             -w /workspace \
             "$image" \
             sh -c "$PRE_COMMAND && $PREPARE_COMMAND && $VERIFY_COMMAND && $PACKAGE_COMMAND"
 
-      - name: Package workspace for downstream image build
+      - name: Package application source for downstream image build
         shell: bash
+        env:
+          SOURCE_PATH: ${{ needs.resolve.outputs.source_path }}
         run: |
           set -euo pipefail
-          tar \
-            --exclude='./.git' \
-            --exclude='./.platform-release' \
-            -czf /tmp/build-workspace.tgz .
+          source_dir="$GITHUB_WORKSPACE/$SOURCE_PATH"
+          test -d "$source_dir"
+          tar -C "$source_dir" -czf /tmp/build-workspace.tgz .
 
       - name: Upload compiled workspace
         uses: actions/upload-artifact@v4
@@ -233,11 +240,13 @@ jobs:
           name: compiled-workspace-${{ needs.resolve.outputs.application }}-${{ github.sha }}
           path: /tmp/compiled-workspace
 
-      - name: Restore compiled workspace
+      - name: Restore isolated application build context
         shell: bash
         run: |
           set -euo pipefail
-          tar -xzf /tmp/compiled-workspace/build-workspace.tgz -C "$GITHUB_WORKSPACE"
+          rm -rf /tmp/application-source
+          mkdir -p /tmp/application-source
+          tar -xzf /tmp/compiled-workspace/build-workspace.tgz -C /tmp/application-source
 
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -268,15 +277,17 @@ jobs:
           DOCKERFILE: ${{ needs.resolve.outputs.dockerfile }}
         run: |
           set -euo pipefail
+          source_dir=/tmp/application-source
+          test -f "$source_dir/$DOCKERFILE"
           image="$LOGIN_SERVER/$REPOSITORY:$GITHUB_SHA"
           docker buildx build \
             --pull \
             --push \
             --sbom=true \
             --provenance=mode=max \
-            -f "$DOCKERFILE" \
+            -f "$source_dir/$DOCKERFILE" \
             -t "$image" \
-            .
+            "$source_dir"
 
       - name: Resolve immutable artifact digest
         id: artifact
