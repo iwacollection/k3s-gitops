@@ -11,6 +11,8 @@ on:
       - 'enterprise-cicd/github-actions/reusable/**'
       - 'enterprise-cicd/github-actions/policies/**'
       - 'enterprise-cicd/testing/contracts/validate_build_platform.py'
+      - '.github/workflows/reusable-application-ci-v2.yml'
+      - '.github/workflows/reusable-application-ci-matrix-v2.yml'
       - '.github/workflows/reusable-application-ci-v1.yml'
       - '.github/workflows/reusable-application-ci-matrix-v1.yml'
       - '.github/workflows/enterprise-ci-reusable.yml'
@@ -26,9 +28,12 @@ on:
       - 'enterprise-cicd/github-actions/reusable/**'
       - 'enterprise-cicd/github-actions/policies/**'
       - 'enterprise-cicd/testing/contracts/validate_build_platform.py'
+      - '.github/workflows/reusable-application-ci-v2.yml'
+      - '.github/workflows/reusable-application-ci-matrix-v2.yml'
       - '.github/workflows/reusable-application-ci-v1.yml'
       - '.github/workflows/reusable-application-ci-matrix-v1.yml'
       - '.github/workflows/enterprise-ci-reusable.yml'
+      - '.github/workflows/build-platform-validate.yml'
 
 permissions:
   contents: read
@@ -53,13 +58,13 @@ jobs:
             enterprise-cicd/ci-scripts/common/prepare_build_env.py \
             enterprise-cicd/testing/contracts/validate_build_platform.py
 
-      - name: Verify callable CI workflow never deploys to Kubernetes
+      - name: Verify canonical CI v2 never deploys to Kubernetes
         shell: bash
         run: |
           set -euo pipefail
-          workflow=.github/workflows/reusable-application-ci-v1.yml
+          workflow=.github/workflows/reusable-application-ci-v2.yml
           if grep -nE 'kubectl[[:space:]]+apply|helm[[:space:]]+(upgrade|install)|az[[:space:]]+aks[[:space:]]+get-credentials|terraform[[:space:]]+apply' "$workflow"; then
-            echo 'Application CI must not contain infrastructure or Kubernetes deployment commands.' >&2
+            echo 'Canonical Application CI v2 must not contain infrastructure or Kubernetes deployment commands.' >&2
             exit 1
           fi
 
@@ -67,13 +72,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workflow=.github/workflows/reusable-application-ci-v1.yml
+          workflow=.github/workflows/reusable-application-ci-v2.yml
           grep -F 'GITHUB_SHA' "$workflow"
           grep -F -- '--sbom=true' "$workflow"
           grep -F -- '--provenance=mode=max' "$workflow"
           grep -F 'cosign sign --yes' "$workflow"
-          grep -F 'BUILD_IMAGE_DIGEST' "$workflow"
-          grep -F '@$BUILD_IMAGE_DIGEST' "$workflow"
+          grep -F 'COMMITTED_DIGEST' "$workflow"
+          grep -F 'LIVE_DIGEST' "$workflow"
+          grep -F '@$COMMITTED_DIGEST' "$workflow"
           grep -F 'builder:{image:$buildImage,digest:$buildImageDigest}' "$workflow"
           grep -F 'BuildImageDigestBinding' enterprise-cicd/build-images/digests/active.json
           grep -F '"mutableTagExecutionAllowed": false' enterprise-cicd/build-images/digests/active.json
@@ -82,25 +88,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workflow=.github/workflows/reusable-application-ci-v1.yml
+          workflow=.github/workflows/reusable-application-ci-v2.yml
           grep -F 'source_path:' "$workflow"
           grep -F 'scan-ref:' "$workflow"
           grep -F -- '--workspace' "$workflow"
           grep -F 'cache_restore_prefix=' "$workflow"
           grep -F 'cacheRestorePrefix' enterprise-cicd/ci-scripts/common/prepare_build_env.py
-          grep -F 'tar -C "$source_dir" -czf /tmp/build-workspace.tgz .' "$workflow"
-          grep -F 'image="$LOGIN_SERVER/build/$image_name@$BUILD_IMAGE_DIGEST"' "$workflow"
-          if grep -F 'image="$LOGIN_SERVER/build/$BUILD_IMAGE"' "$workflow"; then
+          grep -F 'buildImageDigest' enterprise-cicd/ci-scripts/common/prepare_build_env.py
+          grep -F 'tar --exclude=' "$workflow"
+          grep -F 'docker pull "$IMAGE_REF"' "$workflow"
+          if grep -F 'docker pull "$LOGIN_SERVER/build/' "$workflow"; then
             echo 'Mutable build-image tag execution is forbidden.' >&2
             exit 1
           fi
 
-      - name: Verify DAG and matrix orchestration
+      - name: Verify v2 DAG and matrix orchestration
         shell: bash
         run: |
           set -euo pipefail
-          dag=.github/workflows/reusable-application-ci-v1.yml
-          matrix=.github/workflows/reusable-application-ci-matrix-v1.yml
+          dag=.github/workflows/reusable-application-ci-v2.yml
+          matrix=.github/workflows/reusable-application-ci-matrix-v2.yml
 
           grep -F 'needs: [resolve, source-scan, build-test]' "$dag"
           grep -F 'needs: [resolve, image-build, image-scan, sbom]' "$dag"
@@ -108,15 +115,27 @@ jobs:
           grep -F 'needs: [resolve, build-test, image-build, image-scan, sbom, sign]' "$dag"
           grep -F 'strategy:' "$matrix"
           grep -F 'matrix:' "$matrix"
-          grep -F 'uses: ./.github/workflows/reusable-application-ci-v1.yml' "$matrix"
+          grep -F 'max-parallel: 4' "$matrix"
+          grep -F 'length > 20' "$matrix"
+          grep -F 'uses: ./.github/workflows/reusable-application-ci-v2.yml' "$matrix"
+          grep -F 'github_environment:' "$matrix"
 
-      - name: Verify caller/reusable separation
+      - name: Verify caller/reusable separation and platform OIDC ownership
         shell: bash
         run: |
           set -euo pipefail
+          policy=enterprise-cicd/github-actions/policies/reusable-workflow-consumption.json
+          caller=enterprise-cicd/github-actions/policies/application-caller.example.yml
           test ! -e enterprise-cicd/github-actions/reusable/application-ci.yml
-          grep -F 'mainBranchAllowedForProduction' enterprise-cicd/github-actions/policies/reusable-workflow-consumption.json
-          grep -F 'reusable-application-ci-v1.yml@PLATFORM_RELEASE_REF' enterprise-cicd/github-actions/policies/application-caller.example.yml
+          grep -F '"singleApplicationWorkflow": ".github/workflows/reusable-application-ci-v2.yml"' "$policy"
+          grep -F '"matrixWorkflow": ".github/workflows/reusable-application-ci-matrix-v2.yml"' "$policy"
+          grep -F '"azureAuthentication": "platform-environment-oidc-binding"' "$policy"
+          grep -F '"callerSuppliedAzureIdentitySecretsAllowed": false' "$policy"
+          grep -F 'reusable-application-ci-v2.yml@PLATFORM_RELEASE_REF' "$caller"
+          if grep -E 'AZURE_CLIENT_ID|AZURE_TENANT_ID|AZURE_SUBSCRIPTION_ID' "$caller"; then
+            echo 'Canonical application callers must not supply Azure identity secrets.' >&2
+            exit 1
+          fi
           grep -F 'enterprise-ci-reusable-deprecated' .github/workflows/enterprise-ci-reusable.yml
           grep -F 'Reject deprecated arbitrary-command CI entrypoint' .github/workflows/enterprise-ci-reusable.yml
           if grep -F 'inputs.build_command' .github/workflows/enterprise-ci-reusable.yml; then
