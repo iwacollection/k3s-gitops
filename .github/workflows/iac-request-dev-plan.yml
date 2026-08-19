@@ -82,13 +82,19 @@ jobs:
           SUBSCRIPTION_ID="$(jq -r '.environments.dev.plan.subscriptionId // empty' "$BINDING")"
           GITHUB_ENV="$(jq -r '.environments.dev.plan.githubEnvironment // empty' "$BINDING")"
           STATE_WRITE="$(jq -r '.environments.dev.plan.stateWriteAccess' "$BINDING")"
+          STATE_ROLE="$(jq -r '.environments.dev.plan.stateDataRole // empty' "$BINDING")"
+          STATE_SCOPE="$(jq -r '.environments.dev.plan.stateScope // empty' "$BINDING")"
+          RESOURCE_WRITE="$(jq -r '.environments.dev.plan.resourceWriteAccess' "$BINDING")"
           STATE_RG="$(jq -r '.state.resourceGroup // empty' "$BINDING")"
           STATE_STORAGE="$(jq -r '.state.storageAccount // empty' "$BINDING")"
           SHARED_KEY="$(jq -r '.state.sharedKeyAccess' "$BINDING")"
 
           test "$STATUS" = ready || { echo "DEV IaC runtime is not activated: status=$STATUS" >&2; exit 1; }
           test "$GITHUB_ENV" = iac-dev-plan
-          test "$STATE_WRITE" = false
+          test "$STATE_WRITE" = true
+          test "$STATE_ROLE" = 'Storage Blob Data Contributor'
+          test "$STATE_SCOPE" = container
+          test "$RESOURCE_WRITE" = false
           test "$SHARED_KEY" = false
           test -n "$CLIENT_ID" && test -n "$TENANT_ID" && test -n "$SUBSCRIPTION_ID"
           test -n "$STATE_RG" && test -n "$STATE_STORAGE"
@@ -193,7 +199,6 @@ jobs:
             -backend-config=/tmp/iac-plan/backend.hcl
           terraform -chdir="$STACK" validate
           terraform -chdir="$STACK" plan \
-            -lock=false \
             -input=false \
             -var-file=/tmp/iac-plan/request.tfvars.json \
             -out=/tmp/iac-plan/plan.tfplan
@@ -219,7 +224,8 @@ jobs:
               'service': '${{ steps.request.outputs.service }}',
               'changes': changes,
               'destructive': [],
-              'stateMutationAllowed': False,
+              'resourceMutationAllowed': False,
+              'backendStateLeaseRequired': True,
               'status': 'passed'
           }, indent=2))
           PY

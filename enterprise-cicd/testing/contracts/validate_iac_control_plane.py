@@ -38,8 +38,18 @@ def main() -> None:
     require(plan["githubEnvironment"] == "iac-dev-plan", "DEV Plan GitHub Environment changed")
     require(apply["githubEnvironment"] == "iac-dev-apply", "DEV Apply GitHub Environment changed")
     require(plan["githubEnvironment"] != apply["githubEnvironment"], "Plan and Apply must use separate GitHub Environments")
-    require(plan["stateWriteAccess"] is False, "Plan identity must not receive state write access")
+
+    # The azurerm backend uses Azure Blob native state locking. A Lease Blob operation
+    # requires blob write data permission, so even a plan-only identity needs container-
+    # scoped Storage Blob Data Contributor. This does not grant Azure resource writes.
+    require(plan["stateWriteAccess"] is True, "Plan identity must support azurerm backend state lease/write operations")
+    require(plan["stateDataRole"] == "Storage Blob Data Contributor", "Plan backend data role must be Storage Blob Data Contributor")
+    require(plan["stateScope"] == "container", "Plan state data permission must remain container-scoped")
+    require(plan["resourceWriteAccess"] is False, "Plan identity must not receive Azure resource write access")
+
     require(apply["stateWriteAccess"] is True, "Apply identity must own remote-state writes")
+    require(apply["stateDataRole"] == "Storage Blob Data Contributor", "Apply backend data role changed")
+    require(apply["stateScope"] == "container", "Apply state data permission must remain container-scoped")
     require(apply["genericContributor"] is False, "Apply identity must not become generic Contributor")
     require(apply["roleAssignmentWrite"] is False, "Apply identity must not assign Azure RBAC roles")
 
@@ -65,11 +75,16 @@ def main() -> None:
     plan_workflow = plan_workflow_path.read_text(encoding="utf-8")
     require('environment: iac-dev-plan' in plan_workflow, "PR Plan must use iac-dev-plan Environment")
     require("ARM_USE_OIDC: 'true'" in plan_workflow, "PR Plan must use OIDC")
-    require('STATE_WRITE="$(jq -r' in plan_workflow and 'test "$STATE_WRITE" = false' in plan_workflow, "PR Plan must enforce read-only state binding")
-    require('-lock=false' in plan_workflow, "read-only PR Plan must not attempt a state lease/write")
+    require('test "$STATE_WRITE" = true' in plan_workflow, "PR Plan must require backend lease/write capability")
+    require("test \"$STATE_ROLE\" = 'Storage Blob Data Contributor'" in plan_workflow, "PR Plan must require container Blob Data Contributor")
+    require('test "$STATE_SCOPE" = container' in plan_workflow, "PR Plan state scope must remain container")
+    require('test "$RESOURCE_WRITE" = false' in plan_workflow, "PR Plan must deny Azure resource writes")
+    require('-lock=false' not in plan_workflow, "PR Plan must use backend state locking")
     require('terraform -chdir="$STACK" apply' not in plan_workflow, "PR Plan workflow must never terraform apply")
     require('terraform destroy' not in plan_workflow, "PR Plan workflow must never terraform destroy")
     require("'delete' in x['actions']" in plan_workflow, "PR Plan must inspect destructive actions")
+    require("'resourceMutationAllowed': False" in plan_workflow, "PR Plan evidence must state resource mutation is forbidden")
+    require("'backendStateLeaseRequired': True" in plan_workflow, "PR Plan evidence must disclose backend lease requirement")
 
     apply_workflow = apply_workflow_path.read_text(encoding="utf-8")
     require('environment: iac-dev-apply' in apply_workflow, "Apply must use iac-dev-apply Environment")
