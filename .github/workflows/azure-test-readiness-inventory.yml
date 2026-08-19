@@ -1,0 +1,231 @@
+name: Azure TEST Readiness Inventory
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - design/azure-enterprise-control-plane-v1
+    paths:
+      - '.github/workflows/azure-test-readiness-inventory.yml'
+      - 'enterprise-cicd/contracts/environment-bindings.json'
+      - 'enterprise-cicd/contracts/environment-contract.json'
+      - 'enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json'
+      - 'enterprise-cicd/release-requests/platform-smoke-api-to-dev.json'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ENV_BINDING: enterprise-cicd/contracts/environment-bindings.json
+  ENV_CONTRACT: enterprise-cicd/contracts/environment-contract.json
+  TEST_CLUSTER_BINDING: enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json
+  DEV_RELEASE_REQUEST: enterprise-cicd/release-requests/platform-smoke-api-to-dev.json
+  ACR_NAME: acrcicdc12c3a3699d8
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev
+    steps:
+      - name: Checkout platform branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve read-only inventory identity and TEST contract
+        id: contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$ENV_BINDING"
+          test -f "$ENV_CONTRACT"
+          test -f "$TEST_CLUSTER_BINDING"
+          test -f "$DEV_RELEASE_REQUEST"
+
+          test "$(jq -r '.lab_mapping.logical_only_environments | index("test") != null' "$ENV_CONTRACT")" = "true"
+          test "$(jq -r '.metadata.environment' "$TEST_CLUSTER_BINDING")" = "test"
+          test "$(jq -r '.spec.flux.branch' "$TEST_CLUSTER_BINDING")" = "gitops/test"
+          test "$(jq -r '.spec.azure.resourceGroup' "$TEST_CLUSTER_BINDING")" = "group-test"
+          test "$(jq -r '.spec.azure.clusterName' "$TEST_CLUSTER_BINDING")" = "k8s-test-cicd"
+
+          git ls-remote --exit-code --heads origin refs/heads/gitops/test >/dev/null
+          git fetch origin gitops/test:refs/remotes/origin/gitops/test
+          git show origin/gitops/test:enterprise-cicd/gitops/environments/test/namespace.yaml | grep -F 'name: cicd-test'
+          git show origin/gitops/test:enterprise-cicd/gitops/environments/test/kustomization.yaml >/dev/null
+
+          CLIENT_ID="$(jq -r '.environments.dev.identities.githubOidc.clientId // empty' "$ENV_BINDING")"
+          TENANT_ID="$(jq -r '.environments.dev.identities.githubOidc.tenantId // empty' "$ENV_BINDING")"
+          SUBSCRIPTION_ID="$(jq -r '.environments.dev.identities.githubOidc.subscriptionId // empty' "$ENV_BINDING")"
+          test -n "$CLIENT_ID"
+          test -n "$TENANT_ID"
+          test -n "$SUBSCRIPTION_ID"
+
+          TEST_CLIENT_ID="$(jq -r '.environments.test.identities.githubOidc.clientId // empty' "$ENV_BINDING")"
+          if [[ -n "$TEST_CLIENT_ID" ]]; then
+            TEST_IDENTITY_CONFIGURED=true
+          else
+            TEST_IDENTITY_CONFIGURED=false
+          fi
+
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
+          echo "test_identity_configured=$TEST_IDENTITY_CONFIGURED" >> "$GITHUB_OUTPUT"
+          echo "resource_group=$(jq -r '.spec.azure.resourceGroup' "$TEST_CLUSTER_BINDING")" >> "$GITHUB_OUTPUT"
+          echo "cluster_name=$(jq -r '.spec.azure.clusterName' "$TEST_CLUSTER_BINDING")" >> "$GITHUB_OUTPUT"
+          echo "cluster_type=$(jq -r '.spec.azure.clusterType' "$TEST_CLUSTER_BINDING")" >> "$GITHUB_OUTPUT"
+          echo "test_flux_name=$(jq -r '.spec.flux.configurationName' "$TEST_CLUSTER_BINDING")" >> "$GITHUB_OUTPUT"
+          echo "test_flux_branch=$(jq -r '.spec.flux.branch' "$TEST_CLUSTER_BINDING")" >> "$GITHUB_OUTPUT"
+          echo "artifact_repository=$(jq -r '.spec.artifactRepository' "$DEV_RELEASE_REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "artifact_digest=$(jq -r '.spec.artifactDigest' "$DEV_RELEASE_REQUEST")" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login with existing DEV OIDC for inventory only
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.contract.outputs.client_id }}
+          tenant-id: ${{ steps.contract.outputs.tenant_id }}
+          subscription-id: ${{ steps.contract.outputs.subscription_id }}
+
+      - name: Install Azure Flux extension
+        shell: bash
+        run: az extension add --name k8s-configuration --upgrade --yes
+
+      - name: Inventory real AKS, Flux and ACR state
+        id: azure
+        shell: bash
+        env:
+          RG: ${{ steps.contract.outputs.resource_group }}
+          CLUSTER: ${{ steps.contract.outputs.cluster_name }}
+          CLUSTER_TYPE: ${{ steps.contract.outputs.cluster_type }}
+          TEST_FLUX_NAME: ${{ steps.contract.outputs.test_flux_name }}
+          TEST_FLUX_BRANCH: ${{ steps.contract.outputs.test_flux_branch }}
+          ARTIFACT_REPOSITORY: ${{ steps.contract.outputs.artifact_repository }}
+          ARTIFACT_DIGEST: ${{ steps.contract.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p test-readiness-evidence
+
+          az aks show --resource-group "$RG" --name "$CLUSTER" --output json > test-readiness-evidence/aks.json
+          az k8s-configuration flux list \
+            --resource-group "$RG" \
+            --cluster-name "$CLUSTER" \
+            --cluster-type "$CLUSTER_TYPE" \
+            --output json > test-readiness-evidence/flux-configurations.json
+
+          TEST_FLUX_EXISTS="$(jq -r --arg name "$TEST_FLUX_NAME" '[.[] | select(.name == $name)] | length > 0' test-readiness-evidence/flux-configurations.json)"
+          TEST_FLUX_BRANCH_MATCH=false
+          if [[ "$TEST_FLUX_EXISTS" == "true" ]]; then
+            TEST_FLUX_BRANCH_MATCH="$(jq -r --arg name "$TEST_FLUX_NAME" --arg branch "$TEST_FLUX_BRANCH" '[.[] | select(.name == $name and .gitRepository.url != null and (.gitRepository.repositoryRef.branch // "") == $branch)] | length > 0' test-readiness-evidence/flux-configurations.json)"
+          fi
+
+          ACR_DIGEST="$(az acr repository show --name "$ACR_NAME" --image "${ARTIFACT_REPOSITORY#*.azurecr.io/}@$ARTIFACT_DIGEST" --query digest -o tsv)"
+          test "$ACR_DIGEST" = "$ARTIFACT_DIGEST"
+
+          echo "test_flux_exists=$TEST_FLUX_EXISTS" >> "$GITHUB_OUTPUT"
+          echo "test_flux_branch_match=$TEST_FLUX_BRANCH_MATCH" >> "$GITHUB_OUTPUT"
+          echo "artifact_available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install kubelogin and kubectl
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - uses: azure/setup-kubectl@v5
+
+      - name: Set read-only AKS context
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ steps.contract.outputs.resource_group }}
+          cluster-name: ${{ steps.contract.outputs.cluster_name }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Inventory Kubernetes logical TEST state
+        id: kubernetes
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl auth can-i get deployments.apps --namespace cicd-dev | grep -Fx yes
+          kubectl get namespace -o json > test-readiness-evidence/namespaces.json
+
+          if kubectl get namespace cicd-test >/dev/null 2>&1; then
+            TEST_NAMESPACE_EXISTS=true
+          else
+            TEST_NAMESPACE_EXISTS=false
+          fi
+          echo "test_namespace_exists=$TEST_NAMESPACE_EXISTS" >> "$GITHUB_OUTPUT"
+
+      - name: Emit TEST readiness evidence
+        shell: bash
+        env:
+          TEST_IDENTITY_CONFIGURED: ${{ steps.contract.outputs.test_identity_configured }}
+          TEST_FLUX_EXISTS: ${{ steps.azure.outputs.test_flux_exists }}
+          TEST_FLUX_BRANCH_MATCH: ${{ steps.azure.outputs.test_flux_branch_match }}
+          ARTIFACT_AVAILABLE: ${{ steps.azure.outputs.artifact_available }}
+          TEST_NAMESPACE_EXISTS: ${{ steps.kubernetes.outputs.test_namespace_exists }}
+          ARTIFACT_REPOSITORY: ${{ steps.contract.outputs.artifact_repository }}
+          ARTIFACT_DIGEST: ${{ steps.contract.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+
+          blockers='[]'
+          if [[ "$TEST_IDENTITY_CONFIGURED" != "true" ]]; then
+            blockers="$(jq -c '. + ["missing-test-github-oidc-binding"]' <<<"$blockers")"
+          fi
+          if [[ "$TEST_FLUX_EXISTS" != "true" ]]; then
+            blockers="$(jq -c '. + ["missing-test-flux-configuration"]' <<<"$blockers")"
+          elif [[ "$TEST_FLUX_BRANCH_MATCH" != "true" ]]; then
+            blockers="$(jq -c '. + ["test-flux-branch-mismatch"]' <<<"$blockers")"
+          fi
+
+          if [[ "$(jq 'length' <<<"$blockers")" == "0" ]]; then
+            STATUS=ready
+          else
+            STATUS=blocked
+          fi
+
+          jq -n \
+            --arg status "$STATUS" \
+            --arg repository "$ARTIFACT_REPOSITORY" \
+            --arg digest "$ARTIFACT_DIGEST" \
+            --argjson testIdentityConfigured "$TEST_IDENTITY_CONFIGURED" \
+            --argjson testFluxExists "$TEST_FLUX_EXISTS" \
+            --argjson testFluxBranchMatch "$TEST_FLUX_BRANCH_MATCH" \
+            --argjson artifactAvailable "$ARTIFACT_AVAILABLE" \
+            --argjson testNamespaceExists "$TEST_NAMESPACE_EXISTS" \
+            --argjson blockers "$blockers" \
+            '{
+              apiVersion:"platform.activation/v1",
+              kind:"EnvironmentReadiness",
+              metadata:{environment:"test",mode:"logical-environment-on-shared-aks"},
+              spec:{
+                status:$status,
+                physicalBoundary:"shared-lab-aks",
+                logicalBoundaries:{githubEnvironment:"test",gitopsBranch:"gitops/test",namespace:"cicd-test",fluxConfiguration:"enterprise-cicd-test"},
+                artifact:{repository:$repository,digest:$digest,available:$artifactAvailable},
+                checks:{testGithubOidcBinding:$testIdentityConfigured,testFluxConfiguration:$testFluxExists,testFluxBranchMatch:$testFluxBranchMatch,testNamespacePresent:$testNamespaceExists},
+                blockers:$blockers
+              }
+            }' > test-readiness-evidence/readiness.json
+
+          cat test-readiness-evidence/readiness.json
+          {
+            echo '## TEST readiness inventory'
+            echo "- Status: \`$STATUS\`"
+            echo "- Same DEV-approved digest: \`$ARTIFACT_DIGEST\`"
+            echo "- TEST OIDC binding configured: \`$TEST_IDENTITY_CONFIGURED\`"
+            echo "- TEST Flux configuration exists: \`$TEST_FLUX_EXISTS\`"
+            echo "- TEST Flux branch matches gitops/test: \`$TEST_FLUX_BRANCH_MATCH\`"
+            echo "- cicd-test namespace currently exists: \`$TEST_NAMESPACE_EXISTS\`"
+            echo "- Blockers: \`$(jq -c .spec.blockers test-readiness-evidence/readiness.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload TEST readiness evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-readiness-${{ github.run_id }}
+          path: test-readiness-evidence/
+          if-no-files-found: error
+          retention-days: 90
