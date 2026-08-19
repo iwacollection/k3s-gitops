@@ -14,6 +14,7 @@
     "releaseProfile": "rolling/rolling-v1",
     "strategy": "rolling",
     "executionEngine": "kubernetes-deployment",
+    "namespaceManagement": "arm",
     "changeReason": "Promote the exact DEV-verified immutable artifact to TEST after TEST readiness status=ready, dedicated TEST OIDC/RBAC gates passed, ACR digest access passed, and enterprise-cicd-test Flux is bound to gitops/test",
     "sourceRequest": "enterprise-cicd/release-requests/platform-smoke-api-to-test.json",
     "sourceReleaseRequest": "enterprise-cicd/release-requests/platform-smoke-api-to-dev.json"
