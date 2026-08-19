@@ -6,6 +6,7 @@
     "environment": "dev"
   },
   "spec": {
+    "namespaceManagement": "gitops",
     "azure": {
       "resourceGroup": "group-test",
       "clusterName": "k8s-test-cicd",
