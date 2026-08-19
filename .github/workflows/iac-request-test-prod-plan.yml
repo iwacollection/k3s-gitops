@@ -1,0 +1,235 @@
+name: IaC Request TEST PROD Plan
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/iac-requests/test/**.json'
+      - 'enterprise-cicd/iac-requests/prod/**.json'
+      - 'enterprise-cicd/contracts/iac-runtime-bindings.json'
+      - 'enterprise-cicd/iac-catalog/**'
+      - '.github/workflows/iac-request-test-prod-plan.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.requests.outputs.matrix }}
+      count: ${{ steps.requests.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Discover changed TEST and PROD InfrastructureRequests
+        id: requests
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, subprocess
+          from pathlib import Path
+
+          changed=subprocess.check_output(
+              ['git','diff','--name-status',os.environ['BASE_SHA'],os.environ['HEAD_SHA']], text=True
+          ).splitlines()
+          items=[]
+          for row in changed:
+              parts=row.split('\t')
+              if len(parts) < 2:
+                  continue
+              status, path=parts[0], parts[-1]
+              if not path.endswith('.json') or path.endswith('.example.json'):
+                  continue
+              env=None
+              for candidate in ('test','prod'):
+                  if path.startswith(f'enterprise-cicd/iac-requests/{candidate}/'):
+                      env=candidate
+                      break
+              if not env:
+                  continue
+              if status.startswith('D') or not Path(path).is_file():
+                  raise SystemExit(
+                      f'{path}: request deletion cannot auto-destroy; use governed decommission'
+                  )
+              items.append({'path':path,'environment':env})
+          items=sorted(items, key=lambda x:(x['environment'],x['path']))
+          print('matrix=' + json.dumps(items, separators=(',',':')))
+          print('count=' + str(len(items)))
+          PY
+
+  remote-plan:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: iac-${{ matrix.item.environment }}-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REQUEST_PATH: ${{ matrix.item.path }}
+      TARGET_ENV: ${{ matrix.item.environment }}
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Resolve fail-closed environment Plan binding and request metadata
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+
+          env=os.environ['TARGET_ENV']
+          request_path=Path(os.environ['REQUEST_PATH'])
+          req=json.loads(request_path.read_text())
+          spec=req['spec']; meta=req['metadata']
+          if spec['environment'] != env:
+              raise SystemExit('request environment/path mismatch')
+          version=spec['templateVersion']; service=spec['service']
+          catalog=json.loads(Path(f'enterprise-cicd/iac-catalog/services/{service}/{version}/catalog.json').read_text())
+          if catalog.get('lifecycle') != 'active':
+              raise SystemExit(f'{service}/{version} is not active')
+
+          binding=json.loads(Path('enterprise-cicd/contracts/iac-runtime-bindings.json').read_text())
+          runtime=binding['environments'][env]
+          if runtime.get('activationStatus') != 'ready':
+              raise SystemExit(f'{env} IaC runtime is not activated: {runtime.get("activationStatus")}')
+          plan=runtime.get('plan') or {}
+          if plan.get('githubEnvironment') != f'iac-{env}-plan':
+              raise SystemExit(f'{env} Plan GitHub Environment mismatch')
+          if plan.get('stateWriteAccess') is not True:
+              raise SystemExit('azurerm backend Plan identity requires state lease/write capability')
+          if plan.get('stateDataRole') != 'Storage Blob Data Contributor' or plan.get('stateScope') != 'container':
+              raise SystemExit('Plan state data role must be container-scoped Storage Blob Data Contributor')
+          if plan.get('resourceWriteAccess') is not False:
+              raise SystemExit('Plan identity must not have Azure resource write access')
+          if not plan.get('clientId'):
+              raise SystemExit(f'{env} Plan binding has no real clientId')
+          state=binding['state']
+          if state.get('authentication') != 'MicrosoftEntraID' or state.get('sharedKeyAccess') is not False:
+              raise SystemExit('state backend must remain Entra-only')
+          azure=binding['azure']
+          for key,value in {
+              'client_id':plan['clientId'], 'tenant_id':azure['tenantId'],
+              'subscription_id':azure['subscriptionId'], 'state_rg':state['resourceGroup'],
+              'state_storage':state['storageAccount'], 'service':service,
+              'request_name':meta['name'], 'stack':catalog['rootStack']
+          }.items():
+              print(f'{key}={value}')
+          PY
+
+      - name: Azure login using dedicated environment Plan OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.resolve.outputs.client_id }}
+          tenant-id: ${{ steps.resolve.outputs.tenant_id }}
+          subscription-id: ${{ steps.resolve.outputs.subscription_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Render request and Entra-only remote backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-env-plan
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request "$REQUEST_PATH" \
+            --output /tmp/iac-env-plan/request.tfvars.json
+          TFSTATE_RESOURCE_GROUP='${{ steps.resolve.outputs.state_rg }}' \
+          TFSTATE_STORAGE_ACCOUNT='${{ steps.resolve.outputs.state_storage }}' \
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment "$TARGET_ENV" \
+            --service '${{ steps.resolve.outputs.service }}' \
+            --request '${{ steps.resolve.outputs.request_name }}' \
+            --auth oidc \
+            --output /tmp/iac-env-plan/backend.hcl
+
+      - name: Terraform real remote-state Plan
+        shell: bash
+        env:
+          STACK: ${{ steps.resolve.outputs.stack }}
+          ARM_CLIENT_ID: ${{ steps.resolve.outputs.client_id }}
+          ARM_TENANT_ID: ${{ steps.resolve.outputs.tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ steps.resolve.outputs.subscription_id }}
+          TFSTATE_RESOURCE_GROUP: ${{ steps.resolve.outputs.state_rg }}
+          TFSTATE_STORAGE_ACCOUNT: ${{ steps.resolve.outputs.state_storage }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init -reconfigure -input=false -backend-config=/tmp/iac-env-plan/backend.hcl
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" plan \
+            -lock=true \
+            -lock-timeout=5m \
+            -input=false \
+            -var-file=/tmp/iac-env-plan/request.tfvars.json \
+            -out=/tmp/iac-env-plan/plan.tfplan
+          terraform -chdir="$STACK" show -json /tmp/iac-env-plan/plan.tfplan > /tmp/iac-env-plan/plan.json
+
+      - name: Enforce read-only PR Plan safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee /tmp/iac-env-plan/plan-summary.json
+          import json
+          plan=json.load(open('/tmp/iac-env-plan/plan.json'))
+          changes=[]
+          for rc in plan.get('resource_changes', []):
+              actions=rc.get('change',{}).get('actions',[])
+              if actions != ['no-op']:
+                  changes.append({'address':rc.get('address'),'actions':actions})
+          destructive=[item for item in changes if 'delete' in item['actions']]
+          if destructive:
+              raise SystemExit(f'destructive PR IaC plan is forbidden: {destructive}')
+          print(json.dumps({
+              'environment':'${{ matrix.item.environment }}',
+              'request':'${{ steps.resolve.outputs.request_name }}',
+              'service':'${{ steps.resolve.outputs.service }}',
+              'changes':changes,'destructive':[],
+              'resourceMutationAllowed':False,
+              'backendStateLeaseRequired':True,
+              'status':'passed'
+          },indent=2))
+          PY
+
+      - name: Publish environment Plan evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-${{ matrix.item.environment }}-plan-${{ steps.resolve.outputs.request_name }}
+          path: /tmp/iac-env-plan
+          retention-days: 30
+
+  plan-gate:
+    if: ${{ always() }}
+    needs: [discover, remote-plan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require real remote-state Plan when TEST/PROD requests changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ needs.discover.outputs.count }}' = '0' ]; then
+            echo 'No changed TEST/PROD InfrastructureRequest.'
+            exit 0
+          fi
+          test '${{ needs.remote-plan.result }}' = success
