@@ -1,0 +1,63 @@
+name: IaC Delivery Catalog Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/terraform/modules/load-balancer/**'
+      - 'enterprise-cicd/terraform/modules/vpn-gateway/**'
+      - 'enterprise-cicd/terraform/stacks/workloads/iam-role-binding/**'
+      - 'enterprise-cicd/terraform/stacks/workloads/load-balancer/**'
+      - 'enterprise-cicd/terraform/stacks/workloads/vpn-gateway/**'
+      - 'enterprise-cicd/iac-catalog/services/iam-role-binding/**'
+      - 'enterprise-cicd/iac-catalog/services/load-balancer/**'
+      - 'enterprise-cicd/iac-catalog/services/vpn-gateway/**'
+      - 'enterprise-cicd/iac-catalog/render_request.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_delivery_catalog.py'
+      - '.github/workflows/iac-delivery-catalog-validate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate delivery catalog security contract
+        run: python enterprise-cicd/testing/contracts/validate_iac_delivery_catalog.py
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        stack:
+          - enterprise-cicd/terraform/stacks/workloads/iam-role-binding
+          - enterprise-cicd/terraform/stacks/workloads/load-balancer
+          - enterprise-cicd/terraform/stacks/workloads/vpn-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+      - name: Init and validate ${{ matrix.stack }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${{ matrix.stack }}" init -backend=false -input=false
+          terraform -chdir="${{ matrix.stack }}" validate
+
+  gate:
+    if: ${{ always() }}
+    needs: [contract, terraform]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require delivery catalog validation
+        run: |
+          test '${{ needs.contract.result }}' = success
+          test '${{ needs.terraform.result }}' = success
