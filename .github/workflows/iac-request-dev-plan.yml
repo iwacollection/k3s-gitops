@@ -1,0 +1,252 @@
+name: IaC Request DEV Plan
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/iac-requests/dev/**.json'
+      - 'enterprise-cicd/iac-catalog/**'
+      - 'enterprise-cicd/terraform/modules/**'
+      - 'enterprise-cicd/terraform/stacks/workloads/**'
+      - 'enterprise-cicd/terraform/state/**'
+      - 'enterprise-cicd/contracts/iac-runtime-bindings.json'
+      - 'enterprise-cicd/contracts/state-contract.json'
+      - '.github/workflows/iac-request-dev-plan.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      requests: ${{ steps.changed.outputs.requests }}
+      count: ${{ steps.changed.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Discover changed DEV InfrastructureRequests
+        id: changed
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          base = os.environ['BASE_SHA']
+          changed = subprocess.check_output(
+              ['git', 'diff', '--name-only', f'{base}...HEAD'], text=True
+          ).splitlines()
+          requests = sorted(
+              path for path in changed
+              if path.startswith('enterprise-cicd/iac-requests/dev/')
+              and path.endswith('.json')
+              and not path.endswith('.example.json')
+              and Path(path).is_file()
+          )
+          print('requests=' + json.dumps(requests, separators=(',', ':')))
+          print('count=' + str(len(requests)))
+          PY
+
+  binding-gate:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    outputs:
+      client_id: ${{ steps.binding.outputs.client_id }}
+      tenant_id: ${{ steps.binding.outputs.tenant_id }}
+      subscription_id: ${{ steps.binding.outputs.subscription_id }}
+      state_rg: ${{ steps.binding.outputs.state_rg }}
+      state_storage: ${{ steps.binding.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Require activated dedicated DEV Plan identity and state backend
+        id: binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/iac-runtime-bindings.json
+          STATUS="$(jq -r '.environments.dev.activationStatus // empty' "$BINDING")"
+          CLIENT_ID="$(jq -r '.environments.dev.plan.clientId // empty' "$BINDING")"
+          TENANT_ID="$(jq -r '.environments.dev.plan.tenantId // empty' "$BINDING")"
+          SUBSCRIPTION_ID="$(jq -r '.environments.dev.plan.subscriptionId // empty' "$BINDING")"
+          GITHUB_ENV="$(jq -r '.environments.dev.plan.githubEnvironment // empty' "$BINDING")"
+          STATE_WRITE="$(jq -r '.environments.dev.plan.stateWriteAccess' "$BINDING")"
+          STATE_RG="$(jq -r '.state.resourceGroup // empty' "$BINDING")"
+          STATE_STORAGE="$(jq -r '.state.storageAccount // empty' "$BINDING")"
+          SHARED_KEY="$(jq -r '.state.sharedKeyAccess' "$BINDING")"
+
+          test "$STATUS" = ready || { echo "DEV IaC runtime is not activated: status=$STATUS" >&2; exit 1; }
+          test "$GITHUB_ENV" = iac-dev-plan
+          test "$STATE_WRITE" = false
+          test "$SHARED_KEY" = false
+          test -n "$CLIENT_ID" && test -n "$TENANT_ID" && test -n "$SUBSCRIPTION_ID"
+          test -n "$STATE_RG" && test -n "$STATE_STORAGE"
+
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
+          echo "state_rg=$STATE_RG" >> "$GITHUB_OUTPUT"
+          echo "state_storage=$STATE_STORAGE" >> "$GITHUB_OUTPUT"
+
+  remote-plan:
+    needs: [discover, binding-gate]
+    if: ${{ needs.discover.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        request: ${{ fromJSON(needs.discover.outputs.requests) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: iac-dev-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ needs.binding-gate.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.binding-gate.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.binding-gate.outputs.subscription_id }}
+      ARM_SKIP_PROVIDER_REGISTRATION: 'true'
+      TFSTATE_RESOURCE_GROUP: ${{ needs.binding-gate.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.binding-gate.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Resolve governed request metadata
+        id: request
+        shell: bash
+        env:
+          REQUEST_PATH: ${{ matrix.request }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['REQUEST_PATH'])
+          req = json.loads(path.read_text())
+          spec = req['spec']
+          meta = req['metadata']
+          assert spec['environment'] == 'dev', 'DEV Plan only accepts spec.environment=dev'
+          service = spec['service']
+          version = spec['templateVersion']
+          catalog = json.loads(Path(f'enterprise-cicd/iac-catalog/services/{service}/{version}/catalog.json').read_text())
+          assert catalog['lifecycle'] == 'active'
+          print(f"service={service}")
+          print(f"request_name={meta['name']}")
+          print(f"stack={catalog['rootStack']}")
+          PY
+
+      - name: Azure login using dedicated IaC Plan OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.binding-gate.outputs.client_id }}
+          tenant-id: ${{ needs.binding-gate.outputs.tenant_id }}
+          subscription-id: ${{ needs.binding-gate.outputs.subscription_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Render request and Entra-only remote backend
+        shell: bash
+        env:
+          REQUEST_PATH: ${{ matrix.request }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-plan
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request "$REQUEST_PATH" \
+            --output /tmp/iac-plan/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment dev \
+            --service '${{ steps.request.outputs.service }}' \
+            --request '${{ steps.request.outputs.request_name }}' \
+            --auth oidc \
+            --output /tmp/iac-plan/backend.hcl
+
+      - name: Terraform remote-state plan
+        shell: bash
+        env:
+          STACK: ${{ steps.request.outputs.stack }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init \
+            -reconfigure \
+            -input=false \
+            -backend-config=/tmp/iac-plan/backend.hcl
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" plan \
+            -lock=false \
+            -input=false \
+            -var-file=/tmp/iac-plan/request.tfvars.json \
+            -out=/tmp/iac-plan/plan.tfplan
+          terraform -chdir="$STACK" show -json /tmp/iac-plan/plan.tfplan > /tmp/iac-plan/plan.json
+
+      - name: Enforce PR plan safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee /tmp/iac-plan/plan-summary.json
+          import json
+          plan = json.load(open('/tmp/iac-plan/plan.json'))
+          changes = []
+          for rc in plan.get('resource_changes', []):
+              actions = rc.get('change', {}).get('actions', [])
+              if actions != ['no-op']:
+                  changes.append({'address': rc.get('address'), 'actions': actions})
+          destructive = [x for x in changes if 'delete' in x['actions']]
+          if destructive:
+              raise SystemExit(f'destructive PR IaC plan is forbidden: {destructive}')
+          print(json.dumps({
+              'request': '${{ steps.request.outputs.request_name }}',
+              'service': '${{ steps.request.outputs.service }}',
+              'changes': changes,
+              'destructive': [],
+              'stateMutationAllowed': False,
+              'status': 'passed'
+          }, indent=2))
+          PY
+
+      - name: Publish DEV IaC plan evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-dev-plan-${{ steps.request.outputs.request_name }}
+          path: |
+            /tmp/iac-plan/request.tfvars.json
+            /tmp/iac-plan/backend.hcl
+            /tmp/iac-plan/plan.json
+            /tmp/iac-plan/plan-summary.json
+          retention-days: 14
+
+  plan-gate:
+    if: ${{ always() }}
+    needs: [discover, binding-gate, remote-plan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require real remote-state plan for submitted DEV requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ needs.discover.outputs.count }}' = '0' ]; then
+            echo 'No changed DEV InfrastructureRequest requires a remote plan.'
+            exit 0
+          fi
+          test '${{ needs.binding-gate.result }}' = success
+          test '${{ needs.remote-plan.result }}' = success
