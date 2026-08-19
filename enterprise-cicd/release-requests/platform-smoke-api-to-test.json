@@ -11,7 +11,7 @@
     "from": "dev",
     "to": "test",
     "releaseProfile": "rolling/rolling-v1",
-    "changeReason": "Promote the exact DEV-verified immutable artifact to TEST after TEST OIDC, namespace RBAC, ACR read access and Flux readiness gates passed",
+    "changeReason": "Promote the exact DEV-verified immutable artifact to TEST after TEST readiness status=ready, dedicated TEST OIDC/RBAC gates passed, ACR digest access passed, and enterprise-cicd-test Flux is bound to gitops/test",
     "sourceReleaseRequest": "enterprise-cicd/release-requests/platform-smoke-api-to-dev.json"
   }
 }
