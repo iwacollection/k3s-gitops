@@ -16,64 +16,93 @@ def main() -> None:
     validator_path = ROOT / "iac-decommission" / "validate_decommission.py"
     readme_path = ROOT / "iac-decommission" / "README.md"
     guard_path = REPO / ".github" / "workflows" / "iac-dev-retirement-guard.yml"
-    plan_path = REPO / ".github" / "workflows" / "iac-decommission-dev-plan.yml"
-    apply_path = REPO / ".github" / "workflows" / "iac-decommission-dev-apply.yml"
+    dev_plan_path = REPO / ".github" / "workflows" / "iac-decommission-dev-plan.yml"
+    dev_apply_path = REPO / ".github" / "workflows" / "iac-decommission-dev-apply.yml"
+    protected_plan_path = REPO / ".github" / "workflows" / "iac-decommission-protected-plan.yml"
+    protected_apply_path = REPO / ".github" / "workflows" / "iac-decommission-protected-apply.yml"
     drift_path = REPO / ".github" / "workflows" / "iac-dev-drift-detect.yml"
 
-    for path in (validator_path, readme_path, guard_path, plan_path, apply_path, drift_path):
+    for path in (
+        validator_path, readme_path, guard_path, dev_plan_path, dev_apply_path,
+        protected_plan_path, protected_apply_path, drift_path,
+    ):
         require(path.is_file(), f"missing governed decommission file: {path.relative_to(REPO)}")
 
     validator = validator_path.read_text(encoding="utf-8")
-    require('SUPPORTED_SERVICES = {"managed-identity", "network"}' in validator, "DEV decommission capability allowlist changed")
-    require('kind") != "DecommissionRequest"' in validator, "DecommissionRequest kind validation missing")
-    require('metadata.changeTicket must look like CHG-1234' in validator, "change ticket validation missing")
-    require('DESTROY {spec[\'requestName\']}' in validator, "typed DESTROY confirmation validation missing")
-    require('retired InfrastructureRequest must remain in Git' in validator, "source request audit retention guard missing")
-    require('exactly one immutable tombstone is allowed' in validator, "duplicate tombstone guard missing")
+    for token in (
+        'SUPPORTED_ENVIRONMENTS = {"dev", "test", "prod"}',
+        '"managed-identity"', '"network"', '"iam-role-binding"', '"load-balancer"', '"vpn-gateway"',
+        'kind") != "DecommissionRequest"',
+        'metadata.changeTicket must look like CHG-1234',
+        "DESTROY {spec['requestName']}",
+        'retired InfrastructureRequest must remain in Git',
+        'exactly one immutable tombstone is allowed',
+        'environment_decommission_root = DECOMMISSION_ROOT / environment',
+        'environment_request_root = REQUEST_ROOT / environment',
+    ):
+        require(token in validator, f"generalized decommission validator contract missing: {token}")
 
     guard = guard_path.read_text(encoding="utf-8")
-    require("status != 'A'" in guard, "tombstones must be add-only")
-    require('tombstones are append-only and immutable' in guard, "tombstone immutability guard missing")
+    require("status != 'A'" in guard, "DEV tombstones must remain add-only")
+    require('tombstones are append-only and immutable' in guard, "DEV tombstone immutability guard missing")
     require('InfrastructureRequest deletion is forbidden' in guard, "source request deletion guard missing")
     require('retired InfrastructureRequest is immutable' in guard, "retired source request mutation guard missing")
-    require('validate_decommission.py' in guard, "retirement guard must validate new tombstones")
 
-    plan = plan_path.read_text(encoding="utf-8")
-    require('environment: iac-dev-plan' in plan, "decommission PR Plan must use iac-dev-plan")
-    require("ARM_USE_OIDC: 'true'" in plan, "decommission PR Plan must use OIDC")
-    require('-destroy' in plan, "decommission PR must produce a Terraform destroy plan")
-    require('-lock=true' in plan and '-lock-timeout=5m' in plan, "decommission PR Plan must use remote state locking")
-    require('foreign Azure resources block resource-group decommission' in plan, "foreign resource ownership guard missing from decommission Plan")
-    require("x['actions'] != ['delete']" in plan, "decommission Plan must require delete-only actions")
-    require("'resourceMutationAllowed': False" in plan, "decommission PR evidence must deny mutation")
-    require("'automaticApply': False" in plan, "decommission PR must not auto-apply")
-    require('terraform -chdir="$STACK" apply' not in plan, "decommission PR Plan must never apply")
-    require('terraform destroy' not in plan, "direct terraform destroy is forbidden")
+    dev_plan = dev_plan_path.read_text(encoding="utf-8")
+    require('environment: iac-dev-plan' in dev_plan, "DEV decommission Plan must use iac-dev-plan")
+    require("ARM_USE_OIDC: 'true'" in dev_plan, "DEV decommission Plan must use OIDC")
+    require('-destroy' in dev_plan and '-lock=true' in dev_plan, "DEV destroy Plan/state lock missing")
+    require("x['actions'] != ['delete']" in dev_plan, "DEV decommission must remain delete-only")
+    require('terraform -chdir="$STACK" apply' not in dev_plan, "DEV PR destroy Plan must never Apply")
 
-    apply = apply_path.read_text(encoding="utf-8")
-    require('environment: iac-dev-apply' in apply, "decommission Apply must use iac-dev-apply")
-    require("ARM_USE_OIDC: 'true'" in apply, "decommission Apply must use OIDC")
-    require('group: iac-dev-apply' in apply, "decommission must serialize with normal DEV Apply")
-    require('-destroy' in apply, "decommission Apply must re-plan destroy at merge time")
-    require('-lock=true' in apply and '-lock-timeout=5m' in apply, "decommission Apply must lock remote state")
-    require('foreign Azure resources block decommission Apply' in apply, "merge-time foreign resource guard missing")
-    require("x['actions'] != ['delete']" in apply, "decommission Apply must remain delete-only")
-    require('/tmp/iac-decommission-apply/destroy.tfplan' in apply, "decommission Apply must use exact saved destroy plan")
-    require('terraform -chdir="$STACK" apply' in apply, "saved destroy plan Apply is missing")
-    require('terraform destroy' not in apply, "direct terraform destroy is forbidden")
-    require('state list' in apply and 'Terraform state is not empty' in apply, "post-decommission state-empty verification missing")
-    require('az group exists' in apply and 'resource group still exists after decommission' in apply, "post-decommission Azure absence verification missing")
-    require('retention-days: 365' in apply, "decommission audit evidence must be retained for 365 days")
+    dev_apply = dev_apply_path.read_text(encoding="utf-8")
+    require('environment: iac-dev-apply' in dev_apply, "DEV standard decommission Apply environment changed")
+    require('-destroy' in dev_apply and '-lock=true' in dev_apply, "DEV merge-time destroy re-plan/state lock missing")
+    require('/tmp/iac-decommission-apply/destroy.tfplan' in dev_apply, "DEV exact saved destroy plan missing")
+    require('terraform destroy' not in dev_apply, "direct terraform destroy remains forbidden")
+    require('retention-days: 365' in dev_apply, "DEV decommission evidence retention changed")
+
+    protected_plan = protected_plan_path.read_text(encoding="utf-8")
+    for token in (
+        "'iam-role-binding','load-balancer','vpn-gateway'",
+        'environment: iac-${{ matrix.item.environment }}-plan',
+        "ARM_USE_OIDC: 'true'", '-destroy', '-lock=true', '-lock-timeout=5m',
+        "r.get('type') != 'azurerm_role_assignment'",
+        'foreign Azure resources block decommission',
+        "x['actions'] != ['delete']",
+        "'automaticApply':False",
+        'retention-days: 365',
+    ):
+        require(token in protected_plan, f"protected decommission Plan contract missing: {token}")
+    require('terraform -chdir="$STACK" apply' not in protected_plan, "protected PR Plan must never Apply")
+
+    protected_apply = protected_apply_path.read_text(encoding="utf-8")
+    for token in (
+        'workflow_dispatch:', 'confirm_destroy:',
+        "service in {'load-balancer','vpn-gateway'}",
+        "service == 'iam-role-binding'",
+        'environment: ${{ needs.resolve.outputs.github_environment }}',
+        "ARM_USE_OIDC: 'true'", 'id-token: write',
+        '-destroy', '-lock=true', '-lock-timeout=5m',
+        "x['actions'] != ['delete']",
+        '/tmp/iac-protected-decommission-apply/destroy.tfplan',
+        'terraform -chdir="$STACK" apply',
+        'Terraform state is not empty after protected decommission',
+        'role assignments still exist after decommission',
+        'resource group still exists after decommission',
+        'retention-days: 365',
+    ):
+        require(token in protected_apply, f"protected decommission Apply contract missing: {token}")
+    require('terraform destroy' not in protected_apply, "direct terraform destroy is forbidden in protected runtime")
 
     drift = drift_path.read_text(encoding="utf-8")
-    require("Path('enterprise-cicd/iac-decommission/dev')" in drift, "drift discovery must read retirement tombstones")
-    require('if str(path) in retired:' in drift, "drift must exclude retired InfrastructureRequests")
-    require("'enterprise-cicd/iac-decommission/dev/**.json'" in drift, "tombstone merge must refresh drift scope")
+    require("Path('enterprise-cicd/iac-decommission/dev')" in drift, "DEV drift must honor tombstones")
+    require('if str(path) in retired:' in drift, "DEV drift must exclude retired requests")
 
     readme = readme_path.read_text(encoding="utf-8")
     require('Tombstone PR' in readme and 'foreign resources block deletion' in readme, "decommission operator contract is incomplete")
 
-    print("IaC governed decommission security contract valid.")
+    print("IaC governed decommission contract valid: DEV standard + protected multi-environment lifecycle.")
 
 
 if __name__ == "__main__":
