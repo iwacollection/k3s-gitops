@@ -7,6 +7,6 @@
   },
   "spec": {
     "releaseRequest": "enterprise-cicd/release-requests/platform-smoke-api-to-test.json",
-    "gitopsCommit": "88483a338be1189c2fe607b31a991f0756b7d7a0"
+    "gitopsCommit": "bb5b5400b7cedc35f0ed399c3fa450bcc4515df8"
   }
 }
