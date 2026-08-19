@@ -11,6 +11,7 @@ on:
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
+      - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
@@ -30,6 +31,7 @@ on:
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
+      - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
@@ -65,6 +67,9 @@ jobs:
 
       - name: Validate governed IaC decommission boundaries
         run: python enterprise-cicd/testing/contracts/validate_iac_decommission.py
+
+      - name: Exercise governed IaC decommission validator
+        run: python enterprise-cicd/testing/contracts/test_iac_decommission_validator.py
 
       - name: Test platform backend rendering
         env:
