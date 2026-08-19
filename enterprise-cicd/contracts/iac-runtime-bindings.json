@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "state": {
+    "resourceGroup": "rg-platform-cicd",
+    "storageAccount": "sttfstatec12c3a3699d8",
+    "container": "tfstate",
+    "authentication": "MicrosoftEntraID",
+    "sharedKeyAccess": false
+  },
+  "environments": {
+    "dev": {
+      "activationStatus": "pending-bootstrap",
+      "plan": {
+        "principalType": "UserAssignedManagedIdentity",
+        "identityName": "k3s-gitops-iac-plan-dev-uami",
+        "githubEnvironment": "iac-dev-plan",
+        "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+        "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+        "clientId": null,
+        "principalId": null,
+        "resourceId": null,
+        "stateWriteAccess": false
+      },
+      "apply": {
+        "principalType": "UserAssignedManagedIdentity",
+        "identityName": "k3s-gitops-iac-apply-dev-uami",
+        "githubEnvironment": "iac-dev-apply",
+        "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+        "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+        "clientId": null,
+        "principalId": null,
+        "resourceId": null,
+        "stateWriteAccess": true,
+        "genericContributor": false,
+        "roleAssignmentWrite": false
+      }
+    },
+    "test": {
+      "activationStatus": "not-started"
+    },
+    "prod": {
+      "activationStatus": "not-started"
+    }
+  }
+}
