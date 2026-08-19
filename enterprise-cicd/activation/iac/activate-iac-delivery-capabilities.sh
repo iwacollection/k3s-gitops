@@ -15,10 +15,12 @@ done
 [[ "$ENVIRONMENT" =~ ^(dev|test|prod)$ ]] || { echo "--environment must be dev, test or prod" >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FOUNDATION_SCRIPT="${SCRIPT_DIR}/activate-iac-platform-foundation-capability.sh"
 EDGE_SCRIPT="${SCRIPT_DIR}/activate-iac-edge-network-capability.sh"
 IAM_SCRIPT="${SCRIPT_DIR}/activate-iac-iam-capability.sh"
 WORKLOAD_SCRIPT="${SCRIPT_DIR}/activate-iac-workload-services-capability.sh"
 RESULT_FILE="${ENVIRONMENT}-iac-delivery-capabilities-result.json"
+FOUNDATION_RESULT="${ENVIRONMENT}-iac-platform-foundation-capability-result.json"
 EDGE_RESULT="${ENVIRONMENT}-iac-edge-capability-result.json"
 IAM_RESULT="${ENVIRONMENT}-iac-iam-capability-result.json"
 WORKLOAD_RESULT="${ENVIRONMENT}-iac-workload-capability-result.json"
@@ -26,13 +28,15 @@ WORKLOAD_RESULT="${ENVIRONMENT}-iac-workload-capability-result.json"
 log(){ printf '[iac-delivery-%s] %s\n' "$ENVIRONMENT" "$*"; }
 fail(){ printf '[iac-delivery-%s][ERROR] %s\n' "$ENVIRONMENT" "$*" >&2; exit 1; }
 
-for dependency in "$EDGE_SCRIPT" "$IAM_SCRIPT" "$WORKLOAD_SCRIPT"; do
+for dependency in "$FOUNDATION_SCRIPT" "$EDGE_SCRIPT" "$IAM_SCRIPT" "$WORKLOAD_SCRIPT"; do
   [[ -f "$dependency" ]] || fail "missing activation dependency: $dependency"
   bash -n "$dependency" || fail "invalid activation dependency: $dependency"
 done
 
 if [[ "$APPLY" -eq 0 ]]; then
   log "PLAN ONLY - no Azure mutation"
+  echo
+  "$FOUNDATION_SCRIPT" --environment "$ENVIRONMENT"
   echo
   "$EDGE_SCRIPT" --environment "$ENVIRONMENT"
   echo
@@ -47,7 +51,8 @@ No Azure resource mutation was performed.
 When explicitly approved, run:
   $0 --environment ${ENVIRONMENT} --apply
 
-This activates three isolated protected Apply planes:
+This activates four isolated protected Apply planes:
+  - iac-${ENVIRONMENT}-foundation-apply: VNet/Subnets, Private DNS, Log Analytics and Azure Monitor Workspace
   - iac-${ENVIRONMENT}-edge-apply: Standard Load Balancer and VPN Gateway foundation
   - iac-${ENVIRONMENT}-iam-apply: conditioned low-risk IAM role binding
   - iac-${ENVIRONMENT}-workload-apply: ACR, Storage, Key Vault, Service Bus, Managed Redis and PostgreSQL Flexible
@@ -56,6 +61,11 @@ EOF
 fi
 
 log "APPLY mode enabled"
+
+log "Activating protected Platform Foundation capability"
+"$FOUNDATION_SCRIPT" --environment "$ENVIRONMENT" --apply
+[[ -f "$FOUNDATION_RESULT" ]] || fail "Foundation activation result missing: $FOUNDATION_RESULT"
+
 log "Activating protected Edge network capability"
 "$EDGE_SCRIPT" --environment "$ENVIRONMENT" --apply
 [[ -f "$EDGE_RESULT" ]] || fail "Edge activation result missing: $EDGE_RESULT"
@@ -68,15 +78,24 @@ log "Activating protected workload services capability"
 "$WORKLOAD_SCRIPT" --environment "$ENVIRONMENT" --apply
 [[ -f "$WORKLOAD_RESULT" ]] || fail "Workload activation result missing: $WORKLOAD_RESULT"
 
-python3 - "$EDGE_RESULT" "$IAM_RESULT" "$WORKLOAD_RESULT" "$RESULT_FILE" "$ENVIRONMENT" <<'PY'
+python3 - "$FOUNDATION_RESULT" "$EDGE_RESULT" "$IAM_RESULT" "$WORKLOAD_RESULT" "$RESULT_FILE" "$ENVIRONMENT" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-edge_path, iam_path, workload_path, result_path, environment = sys.argv[1:]
+foundation_path, edge_path, iam_path, workload_path, result_path, environment = sys.argv[1:]
+foundation = json.loads(Path(foundation_path).read_text())
 edge = json.loads(Path(edge_path).read_text())
 iam = json.loads(Path(iam_path).read_text())
 workload = json.loads(Path(workload_path).read_text())
+
+assert foundation["status"] == "READY_FOR_IAC_PLATFORM_FOUNDATION_GITHUB_BINDING"
+assert foundation["environment"] == environment
+for key in (
+    "publicIpWrite", "natGatewayWrite", "loadBalancerWrite", "vpnGatewayWrite",
+    "privateEndpointWrite", "workloadServiceWrite", "roleAssignmentWrite",
+):
+    assert foundation[key] is False
 
 assert edge["status"] == "READY_FOR_IAC_EDGE_GITHUB_BINDING"
 assert edge["environment"] == environment
@@ -98,6 +117,7 @@ for key in ("roleAssignmentWrite", "serviceCredentialRead", "keyVaultSecretDataA
 result = {
     "status": "READY_FOR_IAC_DELIVERY_BINDINGS",
     "environment": environment,
+    "foundation": foundation,
     "edge": edge,
     "iam": iam,
     "workload": workload,
