@@ -24,8 +24,16 @@ def main() -> None:
     network_capability_path = ROOT / "activation" / "iac" / "activate-dev-network-capability.sh"
     plan_workflow_path = REPO / ".github" / "workflows" / "iac-request-dev-plan.yml"
     apply_workflow_path = REPO / ".github" / "workflows" / "iac-request-dev-apply.yml"
+    drift_workflow_path = REPO / ".github" / "workflows" / "iac-dev-drift-detect.yml"
 
-    for path in (binding_path, bootstrap_path, network_capability_path, plan_workflow_path, apply_workflow_path):
+    for path in (
+        binding_path,
+        bootstrap_path,
+        network_capability_path,
+        plan_workflow_path,
+        apply_workflow_path,
+        drift_workflow_path,
+    ):
         require(path.is_file(), f"missing IaC control-plane file: {path.relative_to(REPO)}")
 
     binding = load(binding_path)
@@ -81,7 +89,15 @@ def main() -> None:
     require('"Microsoft.Network/virtualNetworks/subnets/write"' in network_capability, "network capability must allow subnet writes")
     require('"Microsoft.Network/*"' not in network_capability, "broad Microsoft.Network wildcard is forbidden")
     require('4d97b98b-1d4f-4787-a291-c67834d212e7' in network_capability, "Network Contributor role ID guard is missing")
-    for forbidden in ("publicIPAddresses/write", "natGateways/write", "virtualNetworkPeerings/write", "vpnGateways/write", "virtualNetworkGateways/write", "applicationGateways/write", "privateDnsZones/write"):
+    for forbidden in (
+        "publicIPAddresses/write",
+        "natGateways/write",
+        "virtualNetworkPeerings/write",
+        "vpnGateways/write",
+        "virtualNetworkGateways/write",
+        "applicationGateways/write",
+        "privateDnsZones/write",
+    ):
         require(forbidden not in network_capability, f"paid/broad network write capability is forbidden: {forbidden}")
 
     plan_workflow = plan_workflow_path.read_text(encoding="utf-8")
@@ -113,6 +129,19 @@ def main() -> None:
     require('managed-identity-verification.json' in apply_workflow, "managed identity post-apply evidence missing")
     require('network-verification.json' in apply_workflow and 'subnet-verification.json' in apply_workflow, "network post-apply Azure evidence missing")
     require("'paidNetworkAddOnsDetected': False" in apply_workflow, "network verification must assert paid add-ons are absent")
+
+    drift_workflow = drift_workflow_path.read_text(encoding="utf-8")
+    require('workflow_dispatch:' in drift_workflow, "Drift detection must support explicit execution")
+    require('schedule:' in drift_workflow, "Drift detection must be scheduled")
+    require('environment: iac-dev-plan' in drift_workflow, "Drift detection must reuse the read-only DEV resource-plane identity")
+    require("ARM_USE_OIDC: 'true'" in drift_workflow, "Drift detection must use OIDC")
+    require('-detailed-exitcode' in drift_workflow, "Drift detection must distinguish convergence from pending changes")
+    require('-lock=true' in drift_workflow, "Drift detection must respect Terraform state locking")
+    require("'resourceMutationAllowed': False" in drift_workflow, "Drift evidence must state that Azure resource mutation is forbidden")
+    require("'automaticRemediation': False" in drift_workflow, "Drift detection must not silently auto-remediate")
+    require('terraform -chdir="$STACK" apply' not in drift_workflow, "Drift detection must never terraform apply")
+    require('terraform destroy' not in drift_workflow, "Drift detection must never terraform destroy")
+    require('environment: iac-dev-apply' not in drift_workflow, "Drift detection must never use the Apply Environment")
 
     print("IaC control-plane security contract valid.")
 
