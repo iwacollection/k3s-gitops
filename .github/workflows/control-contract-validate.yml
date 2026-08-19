@@ -7,6 +7,7 @@ on:
       - 'enterprise-cicd/terraform/state/**'
       - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
+      - 'enterprise-cicd/iac-catalog/services/**'
       - 'enterprise-cicd/iac-decommission/**'
       - 'enterprise-cicd/iac-requests/dev/**.json'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
@@ -14,8 +15,13 @@ on:
       - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
       - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_request_ownership.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_apply_coverage.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
+      - '.github/workflows/iac-request-test-prod-apply.yml'
+      - '.github/workflows/iac-request-protected-capability-apply.yml'
+      - '.github/workflows/iac-request-workload-capability-apply.yml'
+      - '.github/workflows/iac-request-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
       - '.github/workflows/iac-dev-retirement-guard.yml'
       - '.github/workflows/iac-decommission-dev-plan.yml'
@@ -29,6 +35,7 @@ on:
       - 'enterprise-cicd/terraform/state/**'
       - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
+      - 'enterprise-cicd/iac-catalog/services/**'
       - 'enterprise-cicd/iac-decommission/**'
       - 'enterprise-cicd/iac-requests/dev/**.json'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
@@ -36,8 +43,13 @@ on:
       - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
       - 'enterprise-cicd/testing/contracts/test_iac_decommission_validator.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_request_ownership.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_apply_coverage.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
+      - '.github/workflows/iac-request-test-prod-apply.yml'
+      - '.github/workflows/iac-request-protected-capability-apply.yml'
+      - '.github/workflows/iac-request-workload-capability-apply.yml'
+      - '.github/workflows/iac-request-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
       - '.github/workflows/iac-dev-retirement-guard.yml'
       - '.github/workflows/iac-decommission-dev-plan.yml'
@@ -50,7 +62,7 @@ permissions:
 jobs:
   validate-contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,6 +89,9 @@ jobs:
 
       - name: Validate exclusive Catalog resource-group ownership
         run: python enterprise-cicd/testing/contracts/validate_iac_request_ownership.py
+
+      - name: Require Apply coverage for every active Catalog
+        run: python enterprise-cicd/testing/contracts/validate_iac_apply_coverage.py
 
       - name: Test platform backend rendering
         env:
