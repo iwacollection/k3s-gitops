@@ -35,7 +35,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   resolve:
@@ -103,6 +102,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      build_image_digest: ${{ steps.build-image.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve governed OIDC binding
@@ -116,7 +117,7 @@ jobs:
           echo "client_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.clientId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
           echo "tenant_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.tenantId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
           echo "subscription_id=$(jq -r --arg env "$PLATFORM_ENVIRONMENT" '.environments[$env].identities.githubOidc.subscriptionId // empty' "$BINDING")" >> "$GITHUB_OUTPUT"
-      - name: Prepare dependency cache and proxy configuration
+      - name: Prepare dependency cache and immutable builder configuration
         id: prepare
         shell: bash
         env:
@@ -129,37 +130,52 @@ jobs:
         run: |
           set -euo pipefail
           python enterprise-cicd/ci-scripts/common/prepare_build_env.py --application '${{ inputs.application_definition }}' --workspace "$GITHUB_WORKSPACE/$SOURCE_PATH" --output /tmp/platform-build.json --env-file /tmp/platform-build.env --config-dir /tmp/platform-config
+          echo "build_image_digest=$(jq -r .buildImageDigest /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "cache_key=$(jq -r .cacheKey /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
+          echo "cache_restore_prefix=$(jq -r .cacheRestorePrefix /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "cache_dir=$(jq -r .cacheDir /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
           echo "pre_command=$(jq -r .preCommand /tmp/platform-build.json)" >> "$GITHUB_OUTPUT"
-      - name: Restore platform dependency cache
+      - name: Restore profile-scoped platform dependency cache
         uses: actions/cache@v4
         with:
           path: ${{ steps.prepare.outputs.cache_dir }}
           key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.cache_key }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-platform-ci-
+            ${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.cache_restore_prefix }}
       - name: Azure login with OIDC
         uses: azure/login@v3
         with:
           client-id: ${{ steps.auth.outputs.client_id }}
           tenant-id: ${{ steps.auth.outputs.tenant_id }}
           subscription-id: ${{ steps.auth.outputs.subscription_id }}
-      - name: Resolve immutable platform build image
+      - name: Resolve committed immutable platform build image
         id: build-image
         shell: bash
         env:
           ACR_NAME: ${{ inputs.acr_name }}
           BUILD_IMAGE: ${{ needs.resolve.outputs.build_image }}
+          EXPECTED_DIGEST: ${{ steps.prepare.outputs.build_image_digest }}
         run: |
           set -euo pipefail
+          BINDING=enterprise-cicd/build-images/digests/active.json
+          BOUND_ACR="$(jq -r '.spec.acrName // empty' "$BINDING")"
+          test "$BOUND_ACR" = "$ACR_NAME" || { echo "builder digest binding ACR mismatch: binding=$BOUND_ACR requested=$ACR_NAME" >&2; exit 1; }
+          COMMITTED_DIGEST="$(jq -r --arg image "$BUILD_IMAGE" '.spec.images[$image] // empty' "$BINDING")"
+          test "$COMMITTED_DIGEST" = "$EXPECTED_DIGEST" || { echo "prepared/committed builder digest mismatch" >&2; exit 1; }
+          case "$COMMITTED_DIGEST" in sha256:*) ;; *) echo "invalid committed builder digest: $COMMITTED_DIGEST" >&2; exit 1 ;; esac
           NAME="${BUILD_IMAGE%:*}"
           VERSION="${BUILD_IMAGE##*:}"
           LOGIN_SERVER="$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)"
-          DIGEST="$(az acr repository show --name "$ACR_NAME" --image "build/$NAME:$VERSION" --query digest -o tsv)"
-          test -n "$DIGEST"
+          LIVE_DIGEST="$(az acr repository show --name "$ACR_NAME" --image "build/$NAME:$VERSION" --query digest -o tsv)"
+          test "$LIVE_DIGEST" = "$COMMITTED_DIGEST" || {
+            echo "platform build-image tag drift detected: build/$NAME:$VERSION" >&2
+            echo "committed=$COMMITTED_DIGEST" >&2
+            echo "live=$LIVE_DIGEST" >&2
+            exit 1
+          }
           az acr login --name "$ACR_NAME"
-          echo "image_ref=$LOGIN_SERVER/build/$NAME@$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "digest=$COMMITTED_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$LOGIN_SERVER/build/$NAME@$COMMITTED_DIGEST" >> "$GITHUB_OUTPUT"
       - name: Compile, test and package in immutable platform build image
         shell: bash
         env:
@@ -223,6 +239,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/app-build-context
           mkdir -p /tmp/app-build-context
           tar -xzf /tmp/compiled-workspace/build-workspace.tgz -C /tmp/app-build-context
       - name: Azure login with OIDC
@@ -262,6 +279,7 @@ jobs:
           set -euo pipefail
           DIGEST="$(az acr repository show --name "$ACR_NAME" --image "$REPOSITORY:$GITHUB_SHA" --query digest -o tsv)"
           test -n "$DIGEST"
+          case "$DIGEST" in sha256:*) ;; *) echo "invalid application artifact digest: $DIGEST" >&2; exit 1 ;; esac
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "image_ref=$LOGIN_SERVER/$REPOSITORY@$DIGEST" >> "$GITHUB_OUTPUT"
 
@@ -378,7 +396,7 @@ jobs:
         run: cosign sign --yes "$IMAGE"
 
   release-evidence:
-    needs: [resolve, image-build, image-scan, sbom, sign]
+    needs: [resolve, build-test, image-build, image-scan, sbom, sign]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -393,11 +411,13 @@ jobs:
         env:
           APP: ${{ needs.resolve.outputs.application }}
           OWNER: ${{ needs.resolve.outputs.owner }}
+          BUILD_IMAGE: ${{ needs.resolve.outputs.build_image }}
+          BUILD_IMAGE_DIGEST: ${{ needs.build-test.outputs.build_image_digest }}
           REPOSITORY: ${{ needs.image-build.outputs.login_server }}/${{ needs.resolve.outputs.artifact_repository }}
           DIGEST: ${{ needs.image-build.outputs.artifact_digest }}
         run: |
           set -euo pipefail
-          jq -n --arg application "$APP" --arg owner "$OWNER" --arg sourceCommit "$GITHUB_SHA" --arg repository "$REPOSITORY" --arg digest "$DIGEST" '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,owner:$owner,sourceCommit:$sourceCommit,artifact:{repository:$repository,digest:$digest},evidence:{sbom:"sbom.spdx.json",signed:true,provenance:true,sourceScan:true,containerScan:true}}' > .platform-release/artifact.json
+          jq -n --arg application "$APP" --arg owner "$OWNER" --arg sourceCommit "$GITHUB_SHA" --arg buildImage "$BUILD_IMAGE" --arg buildImageDigest "$BUILD_IMAGE_DIGEST" --arg repository "$REPOSITORY" --arg digest "$DIGEST" '{apiVersion:"platform.release/v1",kind:"BuildArtifact",application:$application,owner:$owner,sourceCommit:$sourceCommit,builder:{image:$buildImage,digest:$buildImageDigest},artifact:{repository:$repository,digest:$digest},evidence:{sbom:"sbom.spdx.json",signed:true,provenance:true,sourceScan:true,containerScan:true}}' > .platform-release/artifact.json
           cat .platform-release/artifact.json
       - uses: actions/upload-artifact@v4
         with:
