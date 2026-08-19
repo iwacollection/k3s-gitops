@@ -19,7 +19,10 @@
         "clientId": "514af1f4-0e13-45a4-b54e-a04d0417aa08",
         "principalId": "07eecd2b-7069-4e9a-9731-2e0875834295",
         "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/rg-platform-cicd/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k3s-gitops-iac-plan-dev-uami",
-        "stateWriteAccess": false
+        "stateWriteAccess": true,
+        "stateDataRole": "Storage Blob Data Contributor",
+        "stateScope": "container",
+        "resourceWriteAccess": false
       },
       "apply": {
         "principalType": "UserAssignedManagedIdentity",
@@ -31,6 +34,8 @@
         "principalId": "d71f3fb7-b6ab-41f8-a48e-1970ee182c06",
         "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/rg-platform-cicd/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k3s-gitops-iac-apply-dev-uami",
         "stateWriteAccess": true,
+        "stateDataRole": "Storage Blob Data Contributor",
+        "stateScope": "container",
         "genericContributor": false,
         "roleAssignmentWrite": false
       }
