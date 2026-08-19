@@ -1,0 +1,182 @@
+name: IaC TEST PROD Drift Detect
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to scan
+        required: true
+        type: choice
+        options: [test, prod]
+  schedule:
+    - cron: '43 2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iac-test-prod-drift-detect
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      count: ${{ steps.discover.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover active requests in activated environments
+        id: discover
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_ENV: ${{ inputs.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          binding=json.loads(Path('enterprise-cicd/contracts/iac-runtime-bindings.json').read_text())
+          requested=os.environ.get('REQUESTED_ENV') or ''
+          if os.environ['EVENT_NAME'] == 'workflow_dispatch':
+              envs=[requested]
+              if binding['environments'][requested].get('activationStatus') != 'ready':
+                  raise SystemExit(f'{requested} IaC runtime is not activated')
+          else:
+              envs=[env for env in ('test','prod') if binding['environments'][env].get('activationStatus') == 'ready']
+          matrix=[]
+          for env in envs:
+              retired=set()
+              tombstone_root=Path(f'enterprise-cicd/iac-decommission/{env}')
+              if tombstone_root.is_dir():
+                  for tombstone in sorted(tombstone_root.glob('*.json')):
+                      data=json.loads(tombstone.read_text())
+                      if data.get('kind') != 'DecommissionRequest':
+                          raise SystemExit(f'invalid tombstone kind: {tombstone}')
+                      path=(data.get('spec') or {}).get('requestPath')
+                      if not path: raise SystemExit(f'tombstone missing requestPath: {tombstone}')
+                      if path in retired: raise SystemExit(f'duplicate tombstone for {path}')
+                      retired.add(path)
+              request_root=Path(f'enterprise-cicd/iac-requests/{env}')
+              if not request_root.is_dir():
+                  continue
+              for path in sorted(request_root.glob('*.json')):
+                  if path.name.endswith('.example.json') or str(path) in retired:
+                      continue
+                  req=json.loads(path.read_text())
+                  if req.get('spec',{}).get('environment') != env:
+                      raise SystemExit(f'cross-environment request in {env} drift scope: {path}')
+                  matrix.append({'environment':env,'path':str(path)})
+          print('matrix='+json.dumps(matrix,separators=(',',':')))
+          print('count='+str(len(matrix)))
+          PY
+
+  drift:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: iac-${{ matrix.item.environment }}-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+      REQUEST_PATH: ${{ matrix.item.path }}
+      TARGET_ENV: ${{ matrix.item.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve environment Plan binding and request
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          env=os.environ['TARGET_ENV']; path=Path(os.environ['REQUEST_PATH'])
+          req=json.loads(path.read_text()); spec=req['spec']; meta=req['metadata']
+          if spec['environment'] != env: raise SystemExit('request environment mismatch')
+          catalog=json.loads(Path(f"enterprise-cicd/iac-catalog/services/{spec['service']}/{spec['templateVersion']}/catalog.json").read_text())
+          if catalog.get('lifecycle') != 'active': raise SystemExit('catalog is not active')
+          binding=json.loads(Path('enterprise-cicd/contracts/iac-runtime-bindings.json').read_text())
+          runtime=binding['environments'][env]; plan=runtime.get('plan') or {}
+          if runtime.get('activationStatus') != 'ready': raise SystemExit(f'{env} runtime not ready')
+          if plan.get('githubEnvironment') != f'iac-{env}-plan': raise SystemExit('Plan Environment mismatch')
+          if plan.get('resourceWriteAccess') is not False: raise SystemExit('Plan resource writes forbidden')
+          if plan.get('stateDataRole') != 'Storage Blob Data Contributor' or plan.get('stateScope') != 'container': raise SystemExit('state role mismatch')
+          if not plan.get('clientId'): raise SystemExit('real Plan clientId missing')
+          state=binding['state']; azure=binding['azure']
+          for k,v in {'client_id':plan['clientId'],'tenant_id':azure['tenantId'],'subscription_id':azure['subscriptionId'],'state_rg':state['resourceGroup'],'state_storage':state['storageAccount'],'service':spec['service'],'request_name':meta['name'],'stack':catalog['rootStack']}.items(): print(f'{k}={v}')
+          PY
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ steps.resolve.outputs.client_id }}
+          tenant-id: ${{ steps.resolve.outputs.tenant_id }}
+          subscription-id: ${{ steps.resolve.outputs.subscription_id }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+      - name: Render and run convergence Plan
+        id: plan
+        env:
+          STACK: ${{ steps.resolve.outputs.stack }}
+          ARM_CLIENT_ID: ${{ steps.resolve.outputs.client_id }}
+          ARM_TENANT_ID: ${{ steps.resolve.outputs.tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ steps.resolve.outputs.subscription_id }}
+          TFSTATE_RESOURCE_GROUP: ${{ steps.resolve.outputs.state_rg }}
+          TFSTATE_STORAGE_ACCOUNT: ${{ steps.resolve.outputs.state_storage }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-env-drift
+          python enterprise-cicd/iac-catalog/render_request.py --request "$REQUEST_PATH" --output /tmp/iac-env-drift/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py --scope catalog --environment "$TARGET_ENV" --service '${{ steps.resolve.outputs.service }}' --request '${{ steps.resolve.outputs.request_name }}' --auth oidc --output /tmp/iac-env-drift/backend.hcl
+          terraform -chdir="$STACK" init -reconfigure -input=false -backend-config=/tmp/iac-env-drift/backend.hcl
+          terraform -chdir="$STACK" validate
+          set +e
+          terraform -chdir="$STACK" plan -detailed-exitcode -lock=true -lock-timeout=5m -input=false -var-file=/tmp/iac-env-drift/request.tfvars.json -out=/tmp/iac-env-drift/drift.tfplan
+          rc=$?
+          set -e
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          if [ -f /tmp/iac-env-drift/drift.tfplan ]; then terraform -chdir="$STACK" show -json /tmp/iac-env-drift/drift.tfplan > /tmp/iac-env-drift/plan.json; fi
+      - name: Build and publish drift evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          mkdir -p /tmp/iac-env-drift
+          python - <<'PY' | tee /tmp/iac-env-drift/drift-summary.json
+          import json
+          from pathlib import Path
+          p=Path('/tmp/iac-env-drift/plan.json')
+          changes=[]
+          if p.exists():
+              plan=json.loads(p.read_text())
+              for rc in plan.get('resource_changes',[]):
+                  a=rc.get('change',{}).get('actions',[])
+                  if a != ['no-op']: changes.append({'address':rc.get('address'),'actions':a})
+          print(json.dumps({'environment':'${{ matrix.item.environment }}','request':'${{ steps.resolve.outputs.request_name }}','service':'${{ steps.resolve.outputs.service }}','status':'converged' if not changes and p.exists() else 'drift-or-error','changes':changes,'resourceMutationAllowed':False,'automaticRemediation':False},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: iac-${{ matrix.item.environment }}-drift-${{ steps.resolve.outputs.request_name }}
+          path: /tmp/iac-env-drift
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Fail on drift or Terraform error
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          case '${{ steps.plan.outputs.exit_code }}' in
+            0) echo 'IAC_DRIFT=NONE' ;;
+            2) echo 'IAC_DRIFT=DETECTED' >&2; exit 2 ;;
+            *) echo 'IAC_DRIFT=ERROR' >&2; exit 1 ;;
+          esac
