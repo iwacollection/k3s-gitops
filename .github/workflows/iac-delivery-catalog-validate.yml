@@ -13,6 +13,7 @@ on:
       - 'enterprise-cicd/iac-catalog/services/vpn-gateway/**'
       - 'enterprise-cicd/iac-catalog/render_request.py'
       - 'enterprise-cicd/contracts/iac-runtime-bindings.json'
+      - 'enterprise-cicd/terraform/state/**'
       - 'enterprise-cicd/activation/iac/activate-iac-edge-network-capability.sh'
       - 'enterprise-cicd/activation/iac/activate-iac-iam-capability.sh'
       - 'enterprise-cicd/testing/contracts/validate_iac_delivery_catalog.py'
@@ -56,12 +57,233 @@ jobs:
           terraform -chdir="${{ matrix.stack }}" init -backend=false -input=false
           terraform -chdir="${{ matrix.stack }}" validate
 
+  plan-binding:
+    runs-on: ubuntu-latest
+    outputs:
+      client_id: ${{ steps.binding.outputs.client_id }}
+      tenant_id: ${{ steps.binding.outputs.tenant_id }}
+      subscription_id: ${{ steps.binding.outputs.subscription_id }}
+      state_rg: ${{ steps.binding.outputs.state_rg }}
+      state_storage: ${{ steps.binding.outputs.state_storage }}
+      apply_principal_id: ${{ steps.binding.outputs.apply_principal_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve proven DEV Plan identity and remote state
+        id: binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/iac-runtime-bindings.json
+          test "$(jq -r '.environments.dev.activationStatus' "$BINDING")" = ready
+          test "$(jq -r '.environments.dev.plan.githubEnvironment' "$BINDING")" = iac-dev-plan
+          test "$(jq -r '.environments.dev.plan.resourceWriteAccess' "$BINDING")" = false
+          test "$(jq -r '.environments.dev.plan.stateDataRole' "$BINDING")" = 'Storage Blob Data Contributor'
+          test "$(jq -r '.environments.dev.plan.stateScope' "$BINDING")" = container
+          test "$(jq -r '.state.authentication' "$BINDING")" = MicrosoftEntraID
+          test "$(jq -r '.state.sharedKeyAccess' "$BINDING")" = false
+          for pair in \
+            "client_id:.environments.dev.plan.clientId" \
+            "tenant_id:.azure.tenantId" \
+            "subscription_id:.azure.subscriptionId" \
+            "state_rg:.state.resourceGroup" \
+            "state_storage:.state.storageAccount" \
+            "apply_principal_id:.environments.dev.apply.principalId"; do
+            key="${pair%%:*}"
+            expr="${pair#*:}"
+            value="$(jq -r "$expr // empty" "$BINDING")"
+            test -n "$value"
+            echo "$key=$value" >> "$GITHUB_OUTPUT"
+          done
+
+  real-plan:
+    needs: plan-binding
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: iac-dev-plan
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - iam-role-binding
+          - load-balancer
+          - vpn-gateway
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+      ARM_CLIENT_ID: ${{ needs.plan-binding.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.plan-binding.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.plan-binding.outputs.subscription_id }}
+      TFSTATE_RESOURCE_GROUP: ${{ needs.plan-binding.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.plan-binding.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login using read-only IaC Plan OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.plan-binding.outputs.client_id }}
+          tenant-id: ${{ needs.plan-binding.outputs.tenant_id }}
+          subscription-id: ${{ needs.plan-binding.outputs.subscription_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Prepare governed catalog Plan fixture
+        id: fixture
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+          SUBSCRIPTION_ID: ${{ needs.plan-binding.outputs.subscription_id }}
+          APPLY_PRINCIPAL_ID: ${{ needs.plan-binding.outputs.apply_principal_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-delivery-plan
+          SOURCE="enterprise-cicd/iac-catalog/services/${SERVICE}/v1/request.example.json"
+          REQUEST="/tmp/iac-delivery-plan/request-${SERVICE}.json"
+          cp "$SOURCE" "$REQUEST"
+
+          if [ "$SERVICE" = iam-role-binding ]; then
+            python - "$REQUEST" "$SUBSCRIPTION_ID" "$APPLY_PRINCIPAL_ID" <<'PY'
+          import json, sys
+          path, subscription_id, principal_id = sys.argv[1:]
+          request = json.load(open(path))
+          params = request['spec']['parameters']
+          params['principalId'] = principal_id
+          params['roleName'] = 'Reader'
+          params['principalType'] = 'ServicePrincipal'
+          params['scopeResourceId'] = f'/subscriptions/{subscription_id}/resourceGroups/rg-platform-cicd'
+          json.dump(request, open(path, 'w'), indent=2)
+          PY
+          fi
+
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request "$REQUEST" \
+            --output "/tmp/iac-delivery-plan/${SERVICE}.tfvars.json"
+
+          STACK="$(python - "$SERVICE" <<'PY'
+          import json, sys
+          service=sys.argv[1]
+          catalog=json.load(open(f'enterprise-cicd/iac-catalog/services/{service}/v1/catalog.json'))
+          assert catalog['lifecycle'] == 'active'
+          print(catalog['rootStack'])
+          PY
+          )"
+
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment dev \
+            --service "$SERVICE" \
+            --request "delivery-plan-${SERVICE}" \
+            --auth oidc \
+            --output "/tmp/iac-delivery-plan/${SERVICE}.backend.hcl"
+
+          echo "stack=$STACK" >> "$GITHUB_OUTPUT"
+
+      - name: Run real remote-state Terraform Plan
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+          STACK: ${{ steps.fixture.outputs.stack }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init \
+            -reconfigure \
+            -input=false \
+            -backend-config="/tmp/iac-delivery-plan/${SERVICE}.backend.hcl"
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" plan \
+            -lock=true \
+            -lock-timeout=5m \
+            -input=false \
+            -var-file="/tmp/iac-delivery-plan/${SERVICE}.tfvars.json" \
+            -out="/tmp/iac-delivery-plan/${SERVICE}.tfplan"
+          terraform -chdir="$STACK" show -json \
+            "/tmp/iac-delivery-plan/${SERVICE}.tfplan" \
+            > "/tmp/iac-delivery-plan/${SERVICE}.plan.json"
+
+      - name: Enforce delivery Plan resource boundary
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          python - "$SERVICE" "/tmp/iac-delivery-plan/${SERVICE}.plan.json" <<'PY' \
+            | tee "/tmp/iac-delivery-plan/${SERVICE}.plan-summary.json"
+          import json, sys
+          service, path = sys.argv[1:]
+          plan = json.load(open(path))
+          changes=[]
+          for rc in plan.get('resource_changes', []):
+              actions=rc.get('change',{}).get('actions',[])
+              if actions != ['no-op']:
+                  changes.append({
+                      'address': rc.get('address'),
+                      'type': rc.get('type'),
+                      'actions': actions,
+                  })
+          if not changes:
+              raise SystemExit(f'{service}: delivery fixture produced no Terraform changes')
+          destructive=[x for x in changes if 'delete' in x['actions']]
+          if destructive:
+              raise SystemExit(f'{service}: destructive delivery plan forbidden: {destructive}')
+
+          allowed={
+              'iam-role-binding': {'azurerm_role_assignment'},
+              'load-balancer': {
+                  'azurerm_resource_group','azurerm_public_ip','azurerm_lb',
+                  'azurerm_lb_backend_address_pool','azurerm_lb_probe','azurerm_lb_rule'
+              },
+              'vpn-gateway': {
+                  'azurerm_resource_group','azurerm_virtual_network','azurerm_subnet',
+                  'azurerm_public_ip','azurerm_virtual_network_gateway'
+              },
+          }[service]
+          unexpected=sorted({x['type'] for x in changes} - allowed)
+          if unexpected:
+              raise SystemExit(f'{service}: unexpected resource types in plan: {unexpected}')
+
+          forbidden={'azurerm_virtual_network_gateway_connection','azurerm_local_network_gateway'}
+          present={x['type'] for x in changes}
+          if service == 'vpn-gateway' and present & forbidden:
+              raise SystemExit('vpn-gateway/v1 must not create VPN connections or PSK-bearing resources')
+
+          print(json.dumps({
+              'service': service,
+              'realRemoteStatePlan': True,
+              'resourceMutationAllowed': False,
+              'changes': changes,
+              'destructive': [],
+              'unexpectedResourceTypes': [],
+              'status': 'passed',
+          }, indent=2))
+          PY
+
+      - name: Publish delivery Plan evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-delivery-real-plan-${{ matrix.service }}
+          path: |
+            /tmp/iac-delivery-plan/${{ matrix.service }}.tfvars.json
+            /tmp/iac-delivery-plan/${{ matrix.service }}.backend.hcl
+            /tmp/iac-delivery-plan/${{ matrix.service }}.plan.json
+            /tmp/iac-delivery-plan/${{ matrix.service }}.plan-summary.json
+          retention-days: 30
+
   gate:
     if: ${{ always() }}
-    needs: [contract, terraform]
+    needs: [contract, terraform, plan-binding, real-plan]
     runs-on: ubuntu-latest
     steps:
-      - name: Require delivery catalog validation
+      - name: Require delivery catalog validation and real Terraform Plans
+        shell: bash
         run: |
+          set -euo pipefail
           test '${{ needs.contract.result }}' = success
           test '${{ needs.terraform.result }}' = success
+          test '${{ needs.plan-binding.result }}' = success
+          test '${{ needs.real-plan.result }}' = success
