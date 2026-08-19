@@ -11,6 +11,11 @@ on:
         description: Merged gitops/test commit expected to be reconciled by Flux
         required: true
         type: string
+  push:
+    branches:
+      - design/azure-enterprise-control-plane-v1
+    paths:
+      - 'enterprise-cicd/activation/test/observe-platform-smoke-api.json'
 
 permissions:
   contents: read
@@ -23,15 +28,28 @@ jobs:
     environment: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve governed TEST observation contract
         id: target
         shell: bash
         env:
-          REQUEST: ${{ inputs.release_request }}
-          GITOPS_COMMIT: ${{ inputs.gitops_commit }}
+          DISPATCH_REQUEST: ${{ inputs.release_request }}
+          DISPATCH_GITOPS_COMMIT: ${{ inputs.gitops_commit }}
         run: |
           set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            REQUEST="$DISPATCH_REQUEST"
+            GITOPS_COMMIT="$DISPATCH_GITOPS_COMMIT"
+          else
+            OBSERVE_REQUEST=enterprise-cicd/activation/test/observe-platform-smoke-api.json
+            test -f "$OBSERVE_REQUEST"
+            REQUEST="$(jq -r .spec.releaseRequest "$OBSERVE_REQUEST")"
+            GITOPS_COMMIT="$(jq -r .spec.gitopsCommit "$OBSERVE_REQUEST")"
+          fi
+
           case "$REQUEST" in
             enterprise-cicd/release-requests/*.example.json)
               echo 'Example release requests cannot be observed.' >&2
@@ -42,6 +60,9 @@ jobs:
           esac
           test -f "$REQUEST"
           [[ "$GITOPS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          REMOTE_TEST_HEAD="$(git ls-remote origin refs/heads/gitops/test | awk '{print $1}')"
+          test "$GITOPS_COMMIT" = "$REMOTE_TEST_HEAD"
 
           test "$(jq -r .spec.from "$REQUEST")" = dev
           test "$(jq -r .spec.to "$REQUEST")" = test
@@ -68,6 +89,7 @@ jobs:
           echo "repository=$(jq -r .spec.artifactRepository "$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "gitops_commit=$GITOPS_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "release_request=$REQUEST" >> "$GITHUB_OUTPUT"
 
       - name: Resolve TEST OIDC identity
         id: auth
@@ -79,11 +101,11 @@ jobs:
           TENANT_ID="$(jq -r '.environments.test.identities.githubOidc.tenantId // empty' "$BINDING")"
           SUBSCRIPTION_ID="$(jq -r '.environments.test.identities.githubOidc.subscriptionId // empty' "$BINDING")"
           PRINCIPAL_ID="$(jq -r '.environments.test.identities.githubOidc.principalId // empty' "$BINDING")"
+          DEV_PRINCIPAL="$(jq -r '.environments.dev.identities.githubOidc.principalId // empty' "$BINDING")"
           test -n "$CLIENT_ID"
           test -n "$TENANT_ID"
           test -n "$SUBSCRIPTION_ID"
           test -n "$PRINCIPAL_ID"
-          DEV_PRINCIPAL="$(jq -r '.environments.dev.identities.githubOidc.principalId // empty' "$BINDING")"
           test "$PRINCIPAL_ID" != "$DEV_PRINCIPAL"
           echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
           echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
@@ -191,7 +213,7 @@ jobs:
           REPOSITORY: ${{ steps.target.outputs.repository }}
           DIGEST: ${{ steps.target.outputs.digest }}
           GITOPS_COMMIT: ${{ steps.target.outputs.gitops_commit }}
-          RELEASE_REQUEST: ${{ inputs.release_request }}
+          RELEASE_REQUEST: ${{ steps.target.outputs.release_request }}
         run: |
           set -euo pipefail
           IMAGE="$(jq -r '.spec.template.spec.containers[0].image' platform-test-observation/deployment.json)"
