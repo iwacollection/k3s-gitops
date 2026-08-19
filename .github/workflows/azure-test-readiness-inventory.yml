@@ -11,6 +11,7 @@ on:
       - 'enterprise-cicd/contracts/environment-contract.json'
       - 'enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json'
       - 'enterprise-cicd/release-requests/platform-smoke-api-to-dev.json'
+      - 'enterprise-cicd/activation/test/**'
   pull_request:
     branches:
       - main
@@ -20,6 +21,7 @@ on:
       - 'enterprise-cicd/contracts/environment-contract.json'
       - 'enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json'
       - 'enterprise-cicd/release-requests/platform-smoke-api-to-dev.json'
+      - 'enterprise-cicd/activation/test/**'
 
 permissions:
   contents: read
@@ -37,6 +39,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: dev
+    outputs:
+      test_identity_configured: ${{ steps.contract.outputs.test_identity_configured }}
+      resource_group: ${{ steps.contract.outputs.resource_group }}
+      cluster_name: ${{ steps.contract.outputs.cluster_name }}
+      test_flux_exists: ${{ steps.azure.outputs.test_flux_exists }}
+      test_flux_branch_match: ${{ steps.azure.outputs.test_flux_branch_match }}
+      artifact_available: ${{ steps.azure.outputs.artifact_available }}
+      artifact_repository: ${{ steps.contract.outputs.artifact_repository }}
+      artifact_digest: ${{ steps.contract.outputs.artifact_digest }}
+      dev_cluster_scope_visible: ${{ steps.kubernetes.outputs.cluster_scope_visible }}
     steps:
       - name: Checkout platform branch
         uses: actions/checkout@v4
@@ -72,7 +84,11 @@ jobs:
           test -n "$SUBSCRIPTION_ID"
 
           TEST_CLIENT_ID="$(jq -r '.environments.test.identities.githubOidc.clientId // empty' "$ENV_BINDING")"
-          if [[ -n "$TEST_CLIENT_ID" ]]; then
+          TEST_PRINCIPAL_ID="$(jq -r '.environments.test.identities.githubOidc.principalId // empty' "$ENV_BINDING")"
+          TEST_TENANT_ID="$(jq -r '.environments.test.identities.githubOidc.tenantId // empty' "$ENV_BINDING")"
+          TEST_SUBSCRIPTION_ID="$(jq -r '.environments.test.identities.githubOidc.subscriptionId // empty' "$ENV_BINDING")"
+          TEST_RESOURCE_ID="$(jq -r '.environments.test.identities.githubOidc.resourceId // empty' "$ENV_BINDING")"
+          if [[ -n "$TEST_CLIENT_ID" && -n "$TEST_PRINCIPAL_ID" && -n "$TEST_TENANT_ID" && -n "$TEST_SUBSCRIPTION_ID" && -n "$TEST_RESOURCE_ID" ]]; then
             TEST_IDENTITY_CONFIGURED=true
           else
             TEST_IDENTITY_CONFIGURED=false
@@ -114,19 +130,19 @@ jobs:
           ARTIFACT_DIGEST: ${{ steps.contract.outputs.artifact_digest }}
         run: |
           set -euo pipefail
-          mkdir -p test-readiness-evidence
+          mkdir -p test-readiness-base
 
-          az aks show --resource-group "$RG" --name "$CLUSTER" --output json > test-readiness-evidence/aks.json
+          az aks show --resource-group "$RG" --name "$CLUSTER" --output json > test-readiness-base/aks.json
           az k8s-configuration flux list \
             --resource-group "$RG" \
             --cluster-name "$CLUSTER" \
             --cluster-type "$CLUSTER_TYPE" \
-            --output json > test-readiness-evidence/flux-configurations.json
+            --output json > test-readiness-base/flux-configurations.json
 
-          TEST_FLUX_EXISTS="$(jq -r --arg name "$TEST_FLUX_NAME" '[.[] | select(.name == $name)] | length > 0' test-readiness-evidence/flux-configurations.json)"
+          TEST_FLUX_EXISTS="$(jq -r --arg name "$TEST_FLUX_NAME" '[.[] | select(.name == $name)] | length > 0' test-readiness-base/flux-configurations.json)"
           TEST_FLUX_BRANCH_MATCH=false
           if [[ "$TEST_FLUX_EXISTS" == "true" ]]; then
-            TEST_FLUX_BRANCH_MATCH="$(jq -r --arg name "$TEST_FLUX_NAME" --arg branch "$TEST_FLUX_BRANCH" '[.[] | select(.name == $name and (.gitRepository.repositoryRef.branch // "") == $branch)] | length > 0' test-readiness-evidence/flux-configurations.json)"
+            TEST_FLUX_BRANCH_MATCH="$(jq -r --arg name "$TEST_FLUX_NAME" --arg branch "$TEST_FLUX_BRANCH" '[.[] | select(.name == $name and (.gitRepository.repositoryRef.branch // "") == $branch)] | length > 0' test-readiness-base/flux-configurations.json)"
           fi
 
           ACR_DIGEST="$(az acr repository show --name "$ACR_NAME" --image "${ARTIFACT_REPOSITORY#*.azurecr.io/}@$ARTIFACT_DIGEST" --query digest -o tsv)"
@@ -136,14 +152,15 @@ jobs:
           echo "test_flux_branch_match=$TEST_FLUX_BRANCH_MATCH" >> "$GITHUB_OUTPUT"
           echo "artifact_available=true" >> "$GITHUB_OUTPUT"
 
-      - name: Install kubelogin and kubectl
-        uses: azure/use-kubelogin@v1.2
+      - uses: azure/use-kubelogin@v1.2
         with:
           kubelogin-version: v0.2.19
 
       - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.7
 
-      - name: Set read-only AKS context
+      - name: Set DEV namespace-scoped read context
         uses: azure/aks-set-context@v5
         with:
           resource-group: ${{ steps.contract.outputs.resource_group }}
@@ -151,51 +168,200 @@ jobs:
           admin: 'false'
           use-kubelogin: 'true'
 
-      - name: Verify namespace-scoped DEV inventory access
+      - name: Verify DEV inventory identity remains namespace scoped
         id: kubernetes
         shell: bash
         run: |
           set -euo pipefail
           kubectl auth can-i get deployments.apps --namespace cicd-dev | grep -Fx yes
-          kubectl --namespace cicd-dev get deployment platform-smoke-api -o json > test-readiness-evidence/dev-deployment.json
+          kubectl --namespace cicd-dev get deployment platform-smoke-api -o json > test-readiness-base/dev-deployment.json
 
           set +e
-          kubectl get namespaces -o json > test-readiness-evidence/namespaces.json 2> test-readiness-evidence/cluster-scope-denied.txt
+          kubectl get namespaces -o json > test-readiness-base/namespaces.json 2> test-readiness-base/cluster-scope-denied.txt
           rc=$?
           set -e
-
           if [[ "$rc" == "0" ]]; then
             CLUSTER_SCOPE_VISIBLE=true
           else
             CLUSTER_SCOPE_VISIBLE=false
-            rm -f test-readiness-evidence/namespaces.json
+            rm -f test-readiness-base/namespaces.json
           fi
-
           echo "cluster_scope_visible=$CLUSTER_SCOPE_VISIBLE" >> "$GITHUB_OUTPUT"
 
-      - name: Emit TEST readiness evidence
+      - name: Record base inventory facts
         shell: bash
         env:
           TEST_IDENTITY_CONFIGURED: ${{ steps.contract.outputs.test_identity_configured }}
           TEST_FLUX_EXISTS: ${{ steps.azure.outputs.test_flux_exists }}
           TEST_FLUX_BRANCH_MATCH: ${{ steps.azure.outputs.test_flux_branch_match }}
           ARTIFACT_AVAILABLE: ${{ steps.azure.outputs.artifact_available }}
-          DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE: ${{ steps.kubernetes.outputs.cluster_scope_visible }}
+          DEV_CLUSTER_SCOPE_VISIBLE: ${{ steps.kubernetes.outputs.cluster_scope_visible }}
           ARTIFACT_REPOSITORY: ${{ steps.contract.outputs.artifact_repository }}
           ARTIFACT_DIGEST: ${{ steps.contract.outputs.artifact_digest }}
         run: |
-          set -euo pipefail
+          jq -n \
+            --argjson testIdentityConfigured "$TEST_IDENTITY_CONFIGURED" \
+            --argjson testFluxExists "$TEST_FLUX_EXISTS" \
+            --argjson testFluxBranchMatch "$TEST_FLUX_BRANCH_MATCH" \
+            --argjson artifactAvailable "$ARTIFACT_AVAILABLE" \
+            --argjson devClusterScopeVisible "$DEV_CLUSTER_SCOPE_VISIBLE" \
+            --arg repository "$ARTIFACT_REPOSITORY" \
+            --arg digest "$ARTIFACT_DIGEST" \
+            '{testIdentityConfigured:$testIdentityConfigured,testFluxExists:$testFluxExists,testFluxBranchMatch:$testFluxBranchMatch,artifactAvailable:$artifactAvailable,devClusterScopeVisible:$devClusterScopeVisible,artifactRepository:$repository,artifactDigest:$digest}' \
+            > test-readiness-base/base-facts.json
+          cat test-readiness-base/base-facts.json
 
+      - name: Upload base inventory evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-readiness-base-${{ github.run_id }}
+          path: test-readiness-base/
+          if-no-files-found: error
+          retention-days: 90
+
+  test-identity-probe:
+    needs: inventory
+    if: needs.inventory.outputs.test_identity_configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: test
+    outputs:
+      probe_passed: ${{ steps.verify.outputs.probe_passed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve dedicated TEST OIDC binding
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          CLIENT_ID="$(jq -r '.environments.test.identities.githubOidc.clientId // empty' "$BINDING")"
+          PRINCIPAL_ID="$(jq -r '.environments.test.identities.githubOidc.principalId // empty' "$BINDING")"
+          TENANT_ID="$(jq -r '.environments.test.identities.githubOidc.tenantId // empty' "$BINDING")"
+          SUBSCRIPTION_ID="$(jq -r '.environments.test.identities.githubOidc.subscriptionId // empty' "$BINDING")"
+          DEV_PRINCIPAL="$(jq -r '.environments.dev.identities.githubOidc.principalId // empty' "$BINDING")"
+          test -n "$CLIENT_ID"
+          test -n "$PRINCIPAL_ID"
+          test -n "$TENANT_ID"
+          test -n "$SUBSCRIPTION_ID"
+          test "$PRINCIPAL_ID" != "$DEV_PRINCIPAL"
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login with TEST environment OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+
+      - uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.7
+
+      - name: Set TEST non-admin AKS context
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ needs.inventory.outputs.resource_group }}
+          cluster-name: ${{ needs.inventory.outputs.cluster_name }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Prove TEST namespace read-only RBAC and artifact access
+        id: verify
+        shell: bash
+        env:
+          ARTIFACT_REPOSITORY: ${{ needs.inventory.outputs.artifact_repository }}
+          ARTIFACT_DIGEST: ${{ needs.inventory.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p test-identity-probe
+
+          kubectl auth can-i get deployments.apps --namespace cicd-test | grep -Fx yes
+          kubectl auth can-i get endpointslices.discovery.k8s.io --namespace cicd-test | grep -Fx yes
+          test "$(kubectl auth can-i create deployments.apps --namespace cicd-test)" = no
+          test "$(kubectl auth can-i patch deployments.apps --namespace cicd-test)" = no
+          test "$(kubectl auth can-i delete deployments.apps --namespace cicd-test)" = no
+
+          ACR_DIGEST="$(az acr repository show --name "$ACR_NAME" --image "${ARTIFACT_REPOSITORY#*.azurecr.io/}@$ARTIFACT_DIGEST" --query digest -o tsv)"
+          test "$ACR_DIGEST" = "$ARTIFACT_DIGEST"
+
+          jq -n \
+            --arg principalId '${{ steps.auth.outputs.principal_id }}' \
+            --arg digest "$ARTIFACT_DIGEST" \
+            '{testOidcLogin:true,testPrincipalId:$principalId,namespace:"cicd-test",deploymentRead:true,endpointSliceRead:true,deploymentCreate:false,deploymentPatch:false,deploymentDelete:false,artifactDigest:$digest,artifactRead:true}' \
+            > test-identity-probe/probe.json
+          echo 'probe_passed=true' >> "$GITHUB_OUTPUT"
+          cat test-identity-probe/probe.json
+
+      - name: Upload TEST identity probe evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-identity-probe-${{ github.run_id }}
+          path: test-identity-probe/
+          if-no-files-found: error
+          retention-days: 90
+
+  finalize:
+    needs: [inventory, test-identity-probe]
+    if: always() && needs.inventory.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download base inventory evidence
+        uses: actions/download-artifact@v5
+        with:
+          name: test-readiness-base-${{ github.run_id }}
+          path: test-readiness-evidence
+
+      - name: Download TEST identity probe evidence
+        if: needs.inventory.outputs.test_identity_configured == 'true' && needs.test-identity-probe.result == 'success'
+        uses: actions/download-artifact@v5
+        with:
+          name: test-identity-probe-${{ github.run_id }}
+          path: test-readiness-evidence/test-identity-probe
+
+      - name: Emit final TEST readiness evidence
+        shell: bash
+        env:
+          TEST_IDENTITY_CONFIGURED: ${{ needs.inventory.outputs.test_identity_configured }}
+          TEST_IDENTITY_PROBE_RESULT: ${{ needs.test-identity-probe.result }}
+          TEST_FLUX_EXISTS: ${{ needs.inventory.outputs.test_flux_exists }}
+          TEST_FLUX_BRANCH_MATCH: ${{ needs.inventory.outputs.test_flux_branch_match }}
+          ARTIFACT_AVAILABLE: ${{ needs.inventory.outputs.artifact_available }}
+          DEV_CLUSTER_SCOPE_VISIBLE: ${{ needs.inventory.outputs.dev_cluster_scope_visible }}
+          ARTIFACT_REPOSITORY: ${{ needs.inventory.outputs.artifact_repository }}
+          ARTIFACT_DIGEST: ${{ needs.inventory.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
           blockers='[]'
+          TEST_IDENTITY_PROBE_PASSED=false
+
           if [[ "$TEST_IDENTITY_CONFIGURED" != "true" ]]; then
             blockers="$(jq -c '. + ["missing-test-github-oidc-binding"]' <<<"$blockers")"
+          elif [[ "$TEST_IDENTITY_PROBE_RESULT" != "success" ]]; then
+            blockers="$(jq -c '. + ["test-oidc-or-rbac-probe-failed"]' <<<"$blockers")"
+          else
+            TEST_IDENTITY_PROBE_PASSED=true
           fi
+
           if [[ "$TEST_FLUX_EXISTS" != "true" ]]; then
             blockers="$(jq -c '. + ["missing-test-flux-configuration"]' <<<"$blockers")"
           elif [[ "$TEST_FLUX_BRANCH_MATCH" != "true" ]]; then
             blockers="$(jq -c '. + ["test-flux-branch-mismatch"]' <<<"$blockers")"
           fi
-          if [[ "$DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE" == "true" ]]; then
+
+          if [[ "$ARTIFACT_AVAILABLE" != "true" ]]; then
+            blockers="$(jq -c '. + ["dev-approved-artifact-unavailable"]' <<<"$blockers")"
+          fi
+          if [[ "$DEV_CLUSTER_SCOPE_VISIBLE" == "true" ]]; then
             blockers="$(jq -c '. + ["dev-inventory-identity-has-unexpected-cluster-scope"]' <<<"$blockers")"
           fi
 
@@ -210,10 +376,11 @@ jobs:
             --arg repository "$ARTIFACT_REPOSITORY" \
             --arg digest "$ARTIFACT_DIGEST" \
             --argjson testIdentityConfigured "$TEST_IDENTITY_CONFIGURED" \
+            --argjson testIdentityProbePassed "$TEST_IDENTITY_PROBE_PASSED" \
             --argjson testFluxExists "$TEST_FLUX_EXISTS" \
             --argjson testFluxBranchMatch "$TEST_FLUX_BRANCH_MATCH" \
             --argjson artifactAvailable "$ARTIFACT_AVAILABLE" \
-            --argjson devIdentityClusterScopeVisible "$DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE" \
+            --argjson devClusterScopeVisible "$DEV_CLUSTER_SCOPE_VISIBLE" \
             --argjson blockers "$blockers" \
             '{
               apiVersion:"platform.activation/v1",
@@ -226,10 +393,10 @@ jobs:
                 artifact:{repository:$repository,digest:$digest,available:$artifactAvailable},
                 checks:{
                   testGithubOidcBinding:$testIdentityConfigured,
+                  testOidcAndNamespaceRbacProbe:$testIdentityProbePassed,
                   testFluxConfiguration:$testFluxExists,
                   testFluxBranchMatch:$testFluxBranchMatch,
-                  devInventoryIdentityClusterScopeVisible:$devIdentityClusterScopeVisible,
-                  testNamespaceObservation:"deferred-until-test-identity-activation"
+                  devInventoryIdentityClusterScopeVisible:$devClusterScopeVisible
                 },
                 blockers:$blockers
               }
@@ -241,14 +408,14 @@ jobs:
             echo "- Status: \`$STATUS\`"
             echo "- Same DEV-approved digest: \`$ARTIFACT_DIGEST\`"
             echo "- TEST OIDC binding configured: \`$TEST_IDENTITY_CONFIGURED\`"
+            echo "- TEST OIDC + namespace RBAC probe passed: \`$TEST_IDENTITY_PROBE_PASSED\`"
             echo "- TEST Flux configuration exists: \`$TEST_FLUX_EXISTS\`"
             echo "- TEST Flux branch matches gitops/test: \`$TEST_FLUX_BRANCH_MATCH\`"
-            echo "- DEV inventory identity has cluster-scope namespace visibility: \`$DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE\`"
-            echo '- TEST namespace observation: deferred until TEST identity activation'
+            echo "- DEV inventory identity has cluster-scope namespace visibility: \`$DEV_CLUSTER_SCOPE_VISIBLE\`"
             echo "- Blockers: \`$(jq -c .spec.blockers test-readiness-evidence/readiness.json)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload TEST readiness evidence
+      - name: Upload final TEST readiness evidence
         uses: actions/upload-artifact@v4
         with:
           name: test-readiness-${{ github.run_id }}
