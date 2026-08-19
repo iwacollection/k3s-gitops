@@ -69,6 +69,10 @@ jobs:
           echo "error=$(jq -r '.properties.errorMessage // empty' <<<"$FLUX_JSON")"
           echo "expectedCommit=$EXPECTED_COMMIT"
 
+          echo "=== FLUX OBJECT STATUSES ==="
+          jq -r '.properties.statuses[]? | "kind=\(.kind) name=\(.name) compliance=\(.complianceState)"' <<<"$FLUX_JSON"
+          jq -r '.properties.statuses[]? | .statusConditions[]? | "kind-condition type=\(.type) status=\(.status) reason=\(.reason) message=\(.message)"' <<<"$FLUX_JSON"
+
           echo "=== DEPLOYMENT ==="
           if kubectl -n cicd-test get deployment "$APP" -o json >/tmp/deployment.json 2>/tmp/deployment.err; then
             echo "image=$(jq -r '.spec.template.spec.containers[0].image // empty' /tmp/deployment.json)"
