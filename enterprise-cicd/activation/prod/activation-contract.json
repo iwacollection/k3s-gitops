@@ -1,0 +1,74 @@
+{
+  "apiVersion": "platform.activation/v1",
+  "kind": "EnvironmentActivationContract",
+  "metadata": {
+    "name": "prod-activation",
+    "environment": "prod"
+  },
+  "spec": {
+    "physicalBoundary": {
+      "mode": "shared-lab",
+      "resourceGroup": "group-test",
+      "aksCluster": "k8s-test-cicd",
+      "acr": "acrcicdc12c3a3699d8",
+      "newPaidInfrastructureRequired": false
+    },
+    "logicalBoundary": {
+      "githubEnvironment": "prod",
+      "desiredStateBranch": "gitops/prod",
+      "applicationNamespace": "cicd-prod",
+      "namespaceManagement": "arm",
+      "fluxConfiguration": "enterprise-cicd-prod",
+      "fluxNamespace": "enterprise-cicd-prod",
+      "fluxKustomization": "apps-prod",
+      "gitOpsPath": "./enterprise-cicd/gitops/environments/prod"
+    },
+    "identity": {
+      "name": "k3s-gitops-prod-uami",
+      "oidcSubject": "repo:iwacollection/k3s-gitops:environment:prod",
+      "mustDifferFromDev": true,
+      "mustDifferFromTest": true,
+      "allowed": [
+        "Reader on the shared AKS resource",
+        "Azure Kubernetes Service Cluster User Role on the shared AKS resource",
+        "Azure Kubernetes Service RBAC Reader on cicd-prod only",
+        "AcrPull on the shared ACR"
+      ],
+      "forbidden": [
+        "Owner",
+        "Contributor",
+        "User Access Administrator",
+        "resource-group-wide Reader",
+        "Azure Kubernetes Service RBAC Writer",
+        "Azure Kubernetes Service RBAC Admin",
+        "AcrPush",
+        "Kubernetes deployment create/patch/delete"
+      ]
+    },
+    "gitOps": {
+      "kubernetesWritePlane": "flux-only",
+      "namespaceOwnedByFlux": false,
+      "namespaceOwnershipReason": "Shared Lab AKS uses ARM-owned namespaces to prevent Flux/ARM ownership conflicts observed during TEST activation.",
+      "infrastructurePathReconciled": false,
+      "artifactPromotion": "same-digest-from-test"
+    },
+    "activation": {
+      "identityBootstrapDefault": "plan-only",
+      "fluxBootstrapDefault": "plan-only",
+      "explicitApplyRequired": true,
+      "releaseRequestMustNotExistBeforeReadiness": true
+    },
+    "readiness": {
+      "required": [
+        "prod GitHub Environment exists",
+        "dedicated PROD OIDC binding committed",
+        "PROD principal differs from DEV and TEST",
+        "PROD principal can read cicd-prod but cannot mutate Deployments",
+        "gitops/prod exists",
+        "cicd-prod is ARM-owned and not included in the Flux Desired-State root",
+        "enterprise-cicd-prod Flux configuration is Succeeded and Compliant",
+        "TEST-approved digest remains available in ACR"
+      ]
+    }
+  }
+}
