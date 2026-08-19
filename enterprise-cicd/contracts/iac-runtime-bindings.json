@@ -56,6 +56,10 @@
         "applicationGatewayWrite": false,
         "roleAssignmentWrite": false
       },
+      "foundation": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-dev-foundation-apply"
+      },
       "edge": {
         "activationStatus": "ready",
         "githubEnvironment": "iac-dev-edge-apply",
@@ -110,6 +114,7 @@
     },
     "test": {
       "activationStatus": "not-started",
+      "foundation": {"activationStatus": "not-started", "githubEnvironment": "iac-test-foundation-apply"},
       "networkFoundation": {"activationStatus": "not-started"},
       "edge": {"activationStatus": "not-started", "githubEnvironment": "iac-test-edge-apply"},
       "iam": {"activationStatus": "not-started", "githubEnvironment": "iac-test-iam-apply"},
@@ -121,6 +126,7 @@
     },
     "prod": {
       "activationStatus": "not-started",
+      "foundation": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-foundation-apply"},
       "networkFoundation": {"activationStatus": "not-started"},
       "edge": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-edge-apply"},
       "iam": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-iam-apply"},
