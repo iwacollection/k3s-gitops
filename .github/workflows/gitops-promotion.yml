@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate release request and immutable promotion lineage
+      - name: Validate release request, lineage and environment ownership
         id: request
         shell: bash
         env:
@@ -44,10 +44,7 @@ jobs:
               exit 1
               ;;
             enterprise-cicd/release-requests/*.json) ;;
-            *)
-              echo "Release request must be a committed JSON file under enterprise-cicd/release-requests/." >&2
-              exit 1
-              ;;
+            *) echo "Release request must be a committed JSON file under enterprise-cicd/release-requests/." >&2; exit 1 ;;
           esac
 
           test -f "$REQUEST"
@@ -61,14 +58,12 @@ jobs:
           APPLICATION="$(jq -r .metadata.application "$REQUEST")"
           PROFILE="$(jq -r .spec.releaseProfile "$REQUEST")"
           SOURCE_REQUEST="$(jq -r '.spec.sourceReleaseRequest // empty' "$REQUEST")"
-
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
 
           case "${FROM}->${ENVIRONMENT}" in
             build->dev|dev->test|test->prod) ;;
             *) echo "Unsupported promotion transition: ${FROM}->${ENVIRONMENT}" >&2; exit 1 ;;
           esac
-
           case "$ENVIRONMENT" in
             dev) BASE_BRANCH="gitops/dev" ;;
             test) BASE_BRANCH="gitops/test" ;;
@@ -77,42 +72,46 @@ jobs:
           esac
 
           if [[ "$FROM" == "build" ]]; then
-            if [[ -n "$SOURCE_REQUEST" ]]; then
-              echo "build->dev must not declare sourceReleaseRequest." >&2
-              exit 1
-            fi
+            test -z "$SOURCE_REQUEST"
           else
             case "$SOURCE_REQUEST" in
-              enterprise-cicd/release-requests/*.example.json|"")
-                echo "${FROM}->${ENVIRONMENT} requires a real sourceReleaseRequest." >&2
-                exit 1
-                ;;
               enterprise-cicd/release-requests/*.json) ;;
-              *) echo "Invalid sourceReleaseRequest path: $SOURCE_REQUEST" >&2; exit 1 ;;
+              *) echo "${FROM}->${ENVIRONMENT} requires a real sourceReleaseRequest." >&2; exit 1 ;;
             esac
-
             test -f "$SOURCE_REQUEST"
-            SOURCE_APP="$(jq -r .metadata.application "$SOURCE_REQUEST")"
-            SOURCE_TO="$(jq -r .spec.to "$SOURCE_REQUEST")"
-            SOURCE_REPOSITORY="$(jq -r .spec.artifactRepository "$SOURCE_REQUEST")"
-            SOURCE_DIGEST="$(jq -r .spec.artifactDigest "$SOURCE_REQUEST")"
-
-            test "$SOURCE_APP" = "$APPLICATION"
-            test "$SOURCE_TO" = "$FROM"
-            test "$SOURCE_REPOSITORY" = "$REPOSITORY"
-            test "$SOURCE_DIGEST" = "$DIGEST"
-
-            echo "Immutable lineage verified: ${SOURCE_REQUEST} -> ${REQUEST}"
-            echo "Repository: ${REPOSITORY}"
-            echo "Digest: ${DIGEST}"
+            test "$(jq -r .metadata.application "$SOURCE_REQUEST")" = "$APPLICATION"
+            test "$(jq -r .spec.to "$SOURCE_REQUEST")" = "$FROM"
+            test "$(jq -r .spec.artifactRepository "$SOURCE_REQUEST")" = "$REPOSITORY"
+            test "$(jq -r .spec.artifactDigest "$SOURCE_REQUEST")" = "$DIGEST"
+            echo "Immutable lineage verified: $SOURCE_REQUEST -> $REQUEST"
           fi
 
+          NAMESPACE_MANAGEMENT=gitops
+          MATCHED_BINDING=""
+          while IFS= read -r binding; do
+            [[ "$(jq -r '.metadata.environment // empty' "$binding")" == "$ENVIRONMENT" ]] || continue
+            NAMESPACE_MANAGEMENT="$(jq -r '.spec.namespaceManagement // "gitops"' "$binding")"
+            MATCHED_BINDING="$binding"
+            break
+          done < <(find enterprise-cicd/gitops/clusters -name cluster.json -type f | sort)
+          case "$NAMESPACE_MANAGEMENT" in
+            gitops|arm) ;;
+            *) echo "Unsupported namespaceManagement=$NAMESPACE_MANAGEMENT" >&2; exit 1 ;;
+          esac
+          echo "environment=$ENVIRONMENT namespaceManagement=$NAMESPACE_MANAGEMENT binding=${MATCHED_BINDING:-default}"
+
+          mkdir -p /tmp/platform-control/enterprise-cicd/promotion /tmp/platform-control/enterprise-cicd/release-catalog
           cp "$REQUEST" /tmp/release-request.json
+          cp enterprise-cicd/promotion/render_gitops_overlay.py /tmp/platform-control/enterprise-cicd/promotion/render_gitops_overlay.py
+          cp -R enterprise-cicd/promotion/policies /tmp/platform-control/enterprise-cicd/promotion/
+          cp -R enterprise-cicd/release-catalog/. /tmp/platform-control/enterprise-cicd/release-catalog/
+
           echo "application=$APPLICATION" >> "$GITHUB_OUTPUT"
           echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
           echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "namespace_management=$NAMESPACE_MANAGEMENT" >> "$GITHUB_OUTPUT"
 
       - name: Switch to protected desired-state baseline
         shell: bash
@@ -124,15 +123,16 @@ jobs:
           git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
           test -z "$(git status --porcelain)"
 
-      - name: Render governed GitOps desired state
+      - name: Render governed GitOps desired state with frozen platform control
         shell: bash
         env:
           ORIGINAL_REQUEST: ${{ inputs.release_request }}
           APP: ${{ steps.request.outputs.application }}
           ENVIRONMENT: ${{ steps.request.outputs.environment }}
+          NAMESPACE_MANAGEMENT: ${{ steps.request.outputs.namespace_management }}
         run: |
           set -euo pipefail
-          python enterprise-cicd/promotion/render_gitops_overlay.py --request /tmp/release-request.json
+          python /tmp/platform-control/enterprise-cicd/promotion/render_gitops_overlay.py --request /tmp/release-request.json --gitops-root enterprise-cicd/gitops --namespace-management "$NAMESPACE_MANAGEMENT"
           EVIDENCE="enterprise-cicd/gitops/environments/$ENVIRONMENT/apps/$APP/release-evidence.json"
           test -f "$EVIDENCE"
           jq --arg source "$ORIGINAL_REQUEST" '.spec.sourceRequest = $source' "$EVIDENCE" > /tmp/release-evidence.json
@@ -143,6 +143,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ steps.request.outputs.environment }}
           DIGEST: ${{ steps.request.outputs.digest }}
+          NAMESPACE_MANAGEMENT: ${{ steps.request.outputs.namespace_management }}
         run: |
           set -euo pipefail
           kubectl kustomize "enterprise-cicd/gitops/environments/$ENVIRONMENT" > /tmp/rendered.yaml
@@ -150,6 +151,12 @@ jobs:
           if grep -nE 'image: .*:latest([[:space:]]|$)' /tmp/rendered.yaml; then
             echo "Mutable latest image is forbidden in GitOps desired state." >&2
             exit 1
+          fi
+          if [[ "$NAMESPACE_MANAGEMENT" == arm ]]; then
+            if grep -q '^kind: Namespace$' /tmp/rendered.yaml; then
+              echo "ARM-managed environment must not render a Namespace resource." >&2
+              exit 1
+            fi
           fi
 
       - name: Open protected GitOps pull request
@@ -162,6 +169,7 @@ jobs:
           PROFILE: ${{ steps.request.outputs.profile }}
           REQUEST: ${{ inputs.release_request }}
           BASE_BRANCH: ${{ steps.request.outputs.base_branch }}
+          NAMESPACE_MANAGEMENT: ${{ steps.request.outputs.namespace_management }}
         run: |
           set -euo pipefail
           if git diff --quiet -- enterprise-cicd/gitops; then
@@ -183,6 +191,7 @@ jobs:
           - Desired-state branch: \`${BASE_BRANCH}\`
           - Artifact digest: \`${DIGEST}\`
           - Release profile: \`${PROFILE}\`
+          - Namespace management: \`${NAMESPACE_MANAGEMENT}\`
           - Source request: \`${REQUEST}\`
 
           This PR changes Git desired state only. The build/promotion job has no direct Kubernetes deployment path.
