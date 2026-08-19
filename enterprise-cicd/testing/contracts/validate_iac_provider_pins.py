@@ -28,10 +28,14 @@ EXPECTED_VERSION_FILES = {
 AZURERM_RUNTIME_WORKFLOWS = {
     ".github/workflows/iac-request-dev-plan.yml",
     ".github/workflows/iac-request-dev-apply.yml",
+    ".github/workflows/iac-request-test-prod-plan.yml",
+    ".github/workflows/iac-request-test-prod-apply.yml",
     ".github/workflows/iac-request-protected-capability-apply.yml",
     ".github/workflows/iac-dev-drift-detect.yml",
     ".github/workflows/iac-decommission-dev-plan.yml",
     ".github/workflows/iac-decommission-dev-apply.yml",
+    ".github/workflows/iac-decommission-protected-plan.yml",
+    ".github/workflows/iac-decommission-protected-apply.yml",
 }
 
 
@@ -40,11 +44,7 @@ def fail(message: str) -> None:
 
 
 def main() -> None:
-    actual = {
-        path.relative_to(STACKS).as_posix()
-        for path in STACKS.rglob("versions.tf")
-    }
-
+    actual = {path.relative_to(STACKS).as_posix() for path in STACKS.rglob("versions.tf")}
     missing = EXPECTED_VERSION_FILES - actual
     unexpected = actual - EXPECTED_VERSION_FILES
     if missing or unexpected:
@@ -54,23 +54,13 @@ def main() -> None:
         )
 
     for relative in sorted(EXPECTED_VERSION_FILES):
-        path = STACKS / relative
-        text = path.read_text(encoding="utf-8")
-
+        text = (STACKS / relative).read_text(encoding="utf-8")
         if 'source  = "hashicorp/azurerm"' not in text:
             fail(f"{relative}: AzureRM provider source is missing or changed")
-
         expected = f'version = "{EXPECTED_AZURERM}"'
-        provider_version_lines = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip().startswith('version =')
-        ]
+        provider_version_lines = [line.strip() for line in text.splitlines() if line.strip().startswith('version =')]
         if provider_version_lines != [expected]:
-            fail(
-                f"{relative}: AzureRM provider version must be exactly "
-                f"{EXPECTED_AZURERM!r}; found={provider_version_lines}"
-            )
+            fail(f"{relative}: AzureRM provider version must be exactly {EXPECTED_AZURERM!r}; found={provider_version_lines}")
 
     for relative in sorted(AZURERM_RUNTIME_WORKFLOWS):
         path = REPO / relative
@@ -78,19 +68,13 @@ def main() -> None:
             fail(f"missing AzureRM runtime workflow: {relative}")
         text = path.read_text(encoding="utf-8")
         if "ARM_SKIP_PROVIDER_REGISTRATION" in text:
-            fail(
-                f"{relative}: deprecated ARM_SKIP_PROVIDER_REGISTRATION is forbidden; "
-                "use ARM_RESOURCE_PROVIDER_REGISTRATIONS=none"
-            )
+            fail(f"{relative}: deprecated ARM_SKIP_PROVIDER_REGISTRATION is forbidden")
         if "ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'" not in text:
-            fail(
-                f"{relative}: must disable automatic AzureRM provider registration "
-                "with ARM_RESOURCE_PROVIDER_REGISTRATIONS=none"
-            )
+            fail(f"{relative}: must use ARM_RESOURCE_PROVIDER_REGISTRATIONS=none")
 
     print(
         f"IaC provider/runtime contract valid: {len(EXPECTED_VERSION_FILES)} root stacks, "
-        f"AzureRM {EXPECTED_AZURERM}, {len(AZURERM_RUNTIME_WORKFLOWS)} workflows use the supported registration setting."
+        f"AzureRM {EXPECTED_AZURERM}, {len(AZURERM_RUNTIME_WORKFLOWS)} runtime workflows."
     )
 
 
