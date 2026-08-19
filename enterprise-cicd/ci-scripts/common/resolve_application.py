@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+REPO = ROOT.parent
 
 
 def fail(message: str) -> None:
@@ -14,6 +16,14 @@ def fail(message: str) -> None:
 def load(path: Path):
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def safe_relative_path(value: str, label: str) -> Path:
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        fail(f"unsafe {label}: {value}")
+    normalized = Path(*[part for part in path.parts if part not in {"", "."}])
+    return normalized if normalized.parts else Path(".")
 
 
 def main() -> None:
@@ -27,10 +37,14 @@ def main() -> None:
         fail("invalid application definition")
 
     spec = application["spec"]
-    source_path = spec.get("sourcePath", ".")
-    source = Path(source_path)
-    if source.is_absolute() or ".." in source.parts:
-        fail(f"unsafe application sourcePath: {source_path}")
+    source_path = safe_relative_path(spec.get("sourcePath", "."), "application sourcePath")
+    source = (REPO / source_path).resolve()
+    try:
+        source.relative_to(REPO.resolve())
+    except ValueError:
+        fail(f"application sourcePath escapes repository: {source_path}")
+    if not source.is_dir():
+        fail(f"application sourcePath does not exist or is not a directory: {source_path}")
 
     profile_name = spec["buildProfile"]
     profile_path = ROOT / "ci-catalog" / profile_name / "profile.json"
@@ -42,10 +56,23 @@ def main() -> None:
     commands = build["commands"]
     artifact = spec["artifact"]
 
+    dockerfile = safe_relative_path(artifact.get("dockerfile", "Dockerfile"), "artifact dockerfile")
+    dockerfile_path = (source / dockerfile).resolve()
+    try:
+        dockerfile_path.relative_to(source)
+    except ValueError:
+        fail(f"artifact dockerfile escapes application sourcePath: {dockerfile}")
+    if artifact.get("type") == "container" and not dockerfile_path.is_file():
+        fail(f"container Dockerfile does not exist under application sourcePath: {dockerfile_path.relative_to(REPO)}")
+
+    repository = str(artifact["repository"])
+    if not re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*", repository):
+        fail(f"unsafe artifact repository name: {repository}")
+
     resolved = {
         "application": application["metadata"]["name"],
         "owner": application["metadata"]["owner"],
-        "sourcePath": source.as_posix(),
+        "sourcePath": source_path.as_posix(),
         "buildProfile": profile_name,
         "buildImage": build["buildImage"],
         "dependencyProxy": build["dependencyProxy"],
@@ -55,8 +82,8 @@ def main() -> None:
         "cacheKeyInputs": build.get("cacheKeyInputs", []),
         "requiredControls": build["requiredControls"],
         "artifactType": artifact["type"],
-        "artifactRepository": artifact["repository"],
-        "dockerfile": artifact.get("dockerfile", "Dockerfile"),
+        "artifactRepository": repository,
+        "dockerfile": dockerfile.as_posix(),
         "releaseProfile": spec["deployment"].get("releaseProfile"),
     }
 
