@@ -92,11 +92,7 @@ ROLE_BODY="$(cat <<EOF
         "Microsoft.Network/loadBalancers/backendAddressPools/write",
         "Microsoft.Network/loadBalancers/backendAddressPools/delete",
         "Microsoft.Network/loadBalancers/probes/read",
-        "Microsoft.Network/loadBalancers/probes/write",
-        "Microsoft.Network/loadBalancers/probes/delete",
         "Microsoft.Network/loadBalancers/loadBalancingRules/read",
-        "Microsoft.Network/loadBalancers/loadBalancingRules/write",
-        "Microsoft.Network/loadBalancers/loadBalancingRules/delete",
         "Microsoft.Network/virtualNetworkGateways/read",
         "Microsoft.Network/virtualNetworkGateways/write",
         "Microsoft.Network/virtualNetworkGateways/delete",
@@ -119,11 +115,16 @@ required={
  'Microsoft.Network/publicIPAddresses/write',
  'Microsoft.Network/loadBalancers/write',
  'Microsoft.Network/loadBalancers/backendAddressPools/write',
- 'Microsoft.Network/loadBalancers/probes/write',
- 'Microsoft.Network/loadBalancers/loadBalancingRules/write',
  'Microsoft.Network/virtualNetworkGateways/write',
 }
 assert required <= a
+unsupported={
+ 'Microsoft.Network/loadBalancers/probes/write',
+ 'Microsoft.Network/loadBalancers/probes/delete',
+ 'Microsoft.Network/loadBalancers/loadBalancingRules/write',
+ 'Microsoft.Network/loadBalancers/loadBalancingRules/delete',
+}
+assert not (unsupported & a), unsupported & a
 forbidden=('Microsoft.Network/*','virtualNetworkPeerings/write','natGateways/write','applicationGateways/write','virtualNetworkGatewayConnections/write','Microsoft.Authorization/roleAssignments/write')
 for item in forbidden:
     assert all(item not in action for action in a), item

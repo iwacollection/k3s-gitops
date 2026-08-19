@@ -51,6 +51,7 @@ jobs:
 
           root = Path('.')
           wrapper = (root / 'enterprise-cicd/activation/iac/activate-iac-delivery-capabilities.sh').read_text()
+          edge = (root / 'enterprise-cicd/activation/iac/activate-iac-edge-network-capability.sh').read_text()
           catalog_readme = (root / 'enterprise-cicd/iac-catalog/README.md').read_text()
           request_readme = (root / 'enterprise-cicd/iac-requests/README.md').read_text()
 
@@ -65,6 +66,23 @@ jobs:
               'PLAN ONLY - no Azure mutation',
           ):
               assert token in wrapper, f'delivery wrapper missing contract token: {token}'
+
+          # Azure exposes parent LB write plus selected child operations. Probe/rule
+          # write/delete strings are not valid Microsoft.Network RBAC actions.
+          for token in (
+              'Microsoft.Network/loadBalancers/write',
+              'Microsoft.Network/loadBalancers/backendAddressPools/write',
+              'Microsoft.Network/loadBalancers/probes/read',
+              'Microsoft.Network/loadBalancers/loadBalancingRules/read',
+          ):
+              assert token in edge, f'edge activation missing supported LB action: {token}'
+          for token in (
+              '"Microsoft.Network/loadBalancers/probes/write"',
+              '"Microsoft.Network/loadBalancers/probes/delete"',
+              '"Microsoft.Network/loadBalancers/loadBalancingRules/write"',
+              '"Microsoft.Network/loadBalancers/loadBalancingRules/delete"',
+          ):
+              assert token not in edge, f'edge activation contains unsupported Azure RBAC action: {token}'
 
           services = (
               'network',

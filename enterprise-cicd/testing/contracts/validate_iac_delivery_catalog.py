@@ -109,11 +109,18 @@ def validate_runtime() -> None:
         "Microsoft.Network/publicIPAddresses/write",
         "Microsoft.Network/loadBalancers/write",
         "Microsoft.Network/loadBalancers/backendAddressPools/write",
-        "Microsoft.Network/loadBalancers/probes/write",
-        "Microsoft.Network/loadBalancers/loadBalancingRules/write",
+        "Microsoft.Network/loadBalancers/probes/read",
+        "Microsoft.Network/loadBalancers/loadBalancingRules/read",
         "Microsoft.Network/virtualNetworkGateways/write",
     }:
         require(required in edge_actions, f"Edge role missing {required}")
+    for unsupported in {
+        "Microsoft.Network/loadBalancers/probes/write",
+        "Microsoft.Network/loadBalancers/probes/delete",
+        "Microsoft.Network/loadBalancers/loadBalancingRules/write",
+        "Microsoft.Network/loadBalancers/loadBalancingRules/delete",
+    }:
+        require(unsupported not in edge_actions, f"Edge role contains unsupported Azure action {unsupported}")
     for forbidden in {
         "Microsoft.Network/*",
         "Microsoft.Network/virtualNetworks/virtualNetworkPeerings/write",
