@@ -20,6 +20,9 @@ EXPECTED_VERSION_FILES = {
     "workloads/service-bus/versions.tf",
     "workloads/managed-redis/versions.tf",
     "workloads/postgresql-flexible/versions.tf",
+    "workloads/iam-role-binding/versions.tf",
+    "workloads/load-balancer/versions.tf",
+    "workloads/vpn-gateway/versions.tf",
 }
 
 AZURERM_RUNTIME_WORKFLOWS = {
