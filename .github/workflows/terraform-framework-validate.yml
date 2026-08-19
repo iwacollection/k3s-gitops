@@ -243,7 +243,6 @@ jobs:
         shell: bash
         env:
           PRINCIPAL_ID: ${{ steps.auth.outputs.principal_id }}
-          SUBSCRIPTION_ID: ${{ steps.auth.outputs.subscription_id }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/iac-evidence
@@ -288,6 +287,11 @@ jobs:
             --request "$REQUEST" \
             --output /tmp/request.tfvars.json
           cat /tmp/request.tfvars.json | tee /tmp/iac-evidence/rendered-tfvars.json
+
+          BACKEND_FILE="$STACK/backend.tf"
+          mv "$BACKEND_FILE" "$BACKEND_FILE.readiness-disabled"
+          trap 'mv "$BACKEND_FILE.readiness-disabled" "$BACKEND_FILE" 2>/dev/null || true' EXIT
+          rm -rf "$STACK/.terraform"
 
           terraform -chdir="$STACK" init -backend=false -input=false
           terraform -chdir="$STACK" plan \
