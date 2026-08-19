@@ -43,6 +43,19 @@
         "genericContributor": false,
         "roleAssignmentWrite": false
       },
+      "networkFoundation": {
+        "activationStatus": "ready",
+        "roleName": "Enterprise IaC Network DEV Apply",
+        "roleId": "3f038234-66c3-5cb3-b9e9-5297931c9692",
+        "roleAssignmentId": "ba04be55-341b-5828-b32b-1be9e06f90f4",
+        "genericNetworkContributor": false,
+        "publicIpWrite": false,
+        "natGatewayWrite": false,
+        "peeringWrite": false,
+        "vpnGatewayWrite": false,
+        "applicationGatewayWrite": false,
+        "roleAssignmentWrite": false
+      },
       "edge": {
         "activationStatus": "not-started",
         "githubEnvironment": "iac-dev-edge-apply",
@@ -62,12 +75,7 @@
         "identityName": "k3s-gitops-iac-iam-apply-dev-uami",
         "delegation": "conditioned-rbac-administrator",
         "allowedPrincipalType": "ServicePrincipal",
-        "allowedRoles": [
-          "Reader",
-          "AcrPull",
-          "Storage Blob Data Reader",
-          "Key Vault Secrets User"
-        ],
+        "allowedRoles": ["Reader", "AcrPull", "Storage Blob Data Reader", "Key Vault Secrets User"],
         "subscriptionRootTargetAllowedByRenderer": false,
         "ownerAllowed": false,
         "contributorAllowed": false,
@@ -79,25 +87,15 @@
     },
     "test": {
       "activationStatus": "not-started",
-      "edge": {
-        "activationStatus": "not-started",
-        "githubEnvironment": "iac-test-edge-apply"
-      },
-      "iam": {
-        "activationStatus": "not-started",
-        "githubEnvironment": "iac-test-iam-apply"
-      }
+      "networkFoundation": {"activationStatus": "not-started"},
+      "edge": {"activationStatus": "not-started", "githubEnvironment": "iac-test-edge-apply"},
+      "iam": {"activationStatus": "not-started", "githubEnvironment": "iac-test-iam-apply"}
     },
     "prod": {
       "activationStatus": "not-started",
-      "edge": {
-        "activationStatus": "not-started",
-        "githubEnvironment": "iac-prod-edge-apply"
-      },
-      "iam": {
-        "activationStatus": "not-started",
-        "githubEnvironment": "iac-prod-iam-apply"
-      }
+      "networkFoundation": {"activationStatus": "not-started"},
+      "edge": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-edge-apply"},
+      "iam": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-iam-apply"}
     }
   }
 }
