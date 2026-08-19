@@ -8,8 +8,16 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-DECOMMISSION_ROOT = REPO / "enterprise-cicd" / "iac-decommission" / "dev"
-SUPPORTED_SERVICES = {"managed-identity", "network"}
+DECOMMISSION_ROOT = REPO / "enterprise-cicd" / "iac-decommission"
+REQUEST_ROOT = REPO / "enterprise-cicd" / "iac-requests"
+SUPPORTED_ENVIRONMENTS = {"dev", "test", "prod"}
+SUPPORTED_SERVICES = {
+    "managed-identity",
+    "network",
+    "iam-role-binding",
+    "load-balancer",
+    "vpn-gateway",
+}
 
 
 def fail(message: str) -> None:
@@ -30,7 +38,9 @@ def validate(tombstone_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict
     try:
         tombstone_path.relative_to(DECOMMISSION_ROOT.resolve())
     except ValueError:
-        fail("DEV decommission tombstone must live under enterprise-cicd/iac-decommission/dev")
+        fail("decommission tombstone must live under enterprise-cicd/iac-decommission/<environment>")
+    if not tombstone_path.is_file():
+        fail("decommission tombstone does not exist")
 
     tombstone = load(tombstone_path)
     if tombstone.get("apiVersion") != "platform.iac/v1":
@@ -51,22 +61,31 @@ def validate(tombstone_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict
     required_spec = {"environment", "requestPath", "requestName", "service", "confirmation"}
     if set(spec) != required_spec:
         fail(f"decommission spec must contain exactly {sorted(required_spec)}")
-    if spec["environment"] != "dev":
-        fail("DEV decommission only accepts spec.environment=dev")
+    environment = str(spec["environment"])
+    if environment not in SUPPORTED_ENVIRONMENTS:
+        fail("decommission environment must be dev, test or prod")
     if spec["service"] not in SUPPORTED_SERVICES:
-        fail(f"service is not activated for governed DEV decommission: {spec['service']}")
+        fail(f"service is not activated for governed decommission: {spec['service']}")
+
+    environment_decommission_root = DECOMMISSION_ROOT / environment
+    try:
+        tombstone_path.relative_to(environment_decommission_root.resolve())
+    except ValueError:
+        fail(f"{environment} tombstone must live under enterprise-cicd/iac-decommission/{environment}")
 
     request_path_text = str(spec["requestPath"])
-    if not request_path_text.startswith("enterprise-cicd/iac-requests/dev/"):
-        fail("spec.requestPath must reference a governed DEV InfrastructureRequest")
+    expected_prefix = f"enterprise-cicd/iac-requests/{environment}/"
+    if not request_path_text.startswith(expected_prefix):
+        fail(f"spec.requestPath must reference a governed {environment} InfrastructureRequest")
     if request_path_text.endswith(".example.json") or not request_path_text.endswith(".json"):
         fail("spec.requestPath must reference a non-example JSON request")
 
     request_path = (REPO / request_path_text).resolve()
+    environment_request_root = REQUEST_ROOT / environment
     try:
-        request_path.relative_to((REPO / "enterprise-cicd" / "iac-requests" / "dev").resolve())
+        request_path.relative_to(environment_request_root.resolve())
     except ValueError:
-        fail("spec.requestPath escapes the governed DEV request directory")
+        fail(f"spec.requestPath escapes the governed {environment} request directory")
     if not request_path.is_file():
         fail("retired InfrastructureRequest must remain in Git for audit and deterministic destroy rendering")
 
@@ -76,8 +95,8 @@ def validate(tombstone_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict
 
     request_meta = request.get("metadata") or {}
     request_spec = request.get("spec") or {}
-    if request_spec.get("environment") != "dev":
-        fail("referenced InfrastructureRequest is not DEV")
+    if request_spec.get("environment") != environment:
+        fail("referenced InfrastructureRequest environment does not match tombstone")
     if request_meta.get("name") != spec["requestName"]:
         fail("spec.requestName does not match referenced InfrastructureRequest")
     if request_spec.get("service") != spec["service"]:
@@ -86,8 +105,8 @@ def validate(tombstone_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict
         fail(f"spec.confirmation must be exactly DESTROY {spec['requestName']}")
 
     duplicates: list[str] = []
-    if DECOMMISSION_ROOT.is_dir():
-        for candidate in sorted(DECOMMISSION_ROOT.glob("*.json")):
+    if environment_decommission_root.is_dir():
+        for candidate in sorted(environment_decommission_root.glob("*.json")):
             data = load(candidate)
             if (data.get("spec") or {}).get("requestPath") == request_path_text:
                 duplicates.append(repo_relative(candidate))
@@ -109,32 +128,31 @@ def validate(tombstone_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict
         "service": spec["service"],
         "templateVersion": version,
         "rootStack": catalog["rootStack"],
+        "applyMode": catalog.get("applyMode", "standard"),
         "changeTicket": metadata["changeTicket"],
         "owner": metadata["owner"],
         "reason": metadata["reason"],
         "confirmation": spec["confirmation"],
-        "environment": "dev",
+        "environment": environment,
         "retired": True,
     }
     return tombstone, request, resolved
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate an immutable governed DEV IaC decommission tombstone.")
+    parser = argparse.ArgumentParser(description="Validate an immutable governed IaC decommission tombstone.")
     parser.add_argument("--tombstone", required=True, type=Path)
     parser.add_argument("--original-output", type=Path)
     parser.add_argument("--metadata-output", type=Path)
     args = parser.parse_args()
 
     _, request, resolved = validate(args.tombstone)
-
     if args.original_output:
         args.original_output.parent.mkdir(parents=True, exist_ok=True)
         args.original_output.write_text(json.dumps(request, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if args.metadata_output:
         args.metadata_output.parent.mkdir(parents=True, exist_ok=True)
         args.metadata_output.write_text(json.dumps(resolved, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
     print(json.dumps(resolved, indent=2, sort_keys=True))
 
 
