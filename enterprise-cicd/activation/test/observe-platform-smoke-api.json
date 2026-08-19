@@ -1,0 +1,12 @@
+{
+  "apiVersion": "platform.verification/v1",
+  "kind": "ObservationRequest",
+  "metadata": {
+    "environment": "test",
+    "application": "platform-smoke-api"
+  },
+  "spec": {
+    "releaseRequest": "enterprise-cicd/release-requests/platform-smoke-api-to-test.json",
+    "gitopsCommit": "88483a338be1189c2fe607b31a991f0756b7d7a0"
+  }
+}
