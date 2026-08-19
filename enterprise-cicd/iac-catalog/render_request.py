@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,12 @@ def apply_policy(environment: str, parameters: dict[str, Any], policy: dict[str,
         fail(f"{environment}: replication {parameters.get('replication')!r} is not allowed")
     if "allowedVersions" in env_policy and parameters.get("version") not in env_policy["allowedVersions"]:
         fail(f"{environment}: version {parameters.get('version')!r} is not allowed")
+    for name, values in env_policy.get("allowedValues", {}).items():
+        if parameters.get(name) not in values:
+            fail(f"{environment}: {name}={parameters.get(name)!r} is not allowed; allowed={values}")
+    for name, expected in env_policy.get("requiredEquals", {}).items():
+        if parameters.get(name) != expected:
+            fail(f"{environment}: {name} must equal {expected!r}")
     if env_policy.get("requirePublicNetworkDisabled") and parameters.get("publicNetworkAccess") != "Disabled":
         fail(f"{environment}: public network access must be Disabled")
     if env_policy.get("requireSharedKeyDisabled") and parameters.get("sharedKeyAccess") is not False:
@@ -186,15 +193,46 @@ def parse_private_ipv4_cidr(name: str, value: str) -> ipaddress.IPv4Network:
     except ValueError as exc:
         fail(f"{name}: invalid CIDR: {exc}")
     if not isinstance(network, ipaddress.IPv4Network):
-        fail(f"{name}: only IPv4 is supported in network/v1")
+        fail(f"{name}: only IPv4 is supported")
     private_ranges = (
         ipaddress.ip_network("10.0.0.0/8"),
         ipaddress.ip_network("172.16.0.0/12"),
         ipaddress.ip_network("192.168.0.0/16"),
     )
     if not any(network.subnet_of(parent) for parent in private_ranges):
-        fail(f"{name}: network/v1 only allows RFC1918 private address space")
+        fail(f"{name}: only RFC1918 private address space is allowed")
     return network
+
+
+def require_guid(name: str, value: str) -> str:
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        fail(f"{name}: valid GUID required")
+
+
+def require_resource_group_or_child_scope(name: str, value: str) -> str:
+    pattern = r"^/subscriptions/([0-9a-fA-F-]{36})/resourceGroups/([A-Za-z0-9._()\-]+)(/providers/.+)?$"
+    match = re.fullmatch(pattern, value)
+    if not match:
+        fail(f"{name}: must be an Azure resource-group scope or a child resource scope")
+    require_guid(f"{name}.subscriptionId", match.group(1))
+    lowered = value.lower()
+    if "/providers/microsoft.authorization/roleassignments/" in lowered:
+        fail(f"{name}: role-assignment resource scopes are forbidden")
+    if "/providers/microsoft.authorization/roledefinitions/" in lowered:
+        fail(f"{name}: role-definition resource scopes are forbidden")
+    return value
+
+
+def require_subnet_resource_id(name: str, value: str) -> str:
+    pattern = (
+        r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()\-]+/"
+        r"providers/Microsoft\.Network/virtualNetworks/[^/]+/subnets/[^/]+$"
+    )
+    if not re.fullmatch(pattern, value, re.IGNORECASE):
+        fail(f"{name}: Azure subnet resource ID required")
+    return value
 
 
 def acr_tfvars(request: dict[str, Any], parameters: dict[str, Any], name_prefix: str) -> dict[str, Any]:
@@ -281,6 +319,73 @@ def network_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[
     return result
 
 
+def iam_role_binding_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    principal_id = require_guid("principalId", parameters["principalId"])
+    scope = require_resource_group_or_child_scope("scopeResourceId", parameters["scopeResourceId"])
+    return {
+        "assignments": {
+            slug(request["metadata"]["name"]): {
+                "scope": scope,
+                "role_definition_name": parameters["roleName"],
+                "principal_id": principal_id,
+                "principal_type": parameters["principalType"],
+                "description": f"IaC request {request['metadata']['name']} owned by {request['metadata']['owner']}",
+            }
+        }
+    }
+
+
+def load_balancer_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    result = common(request)
+    app = slug(request["metadata"]["application"])
+    env = request["spec"]["environment"]
+    exposure = parameters["exposure"]
+    subnet_resource_id = parameters.get("subnetResourceId", "")
+    if exposure == "internal":
+        require_subnet_resource_id("subnetResourceId", subnet_resource_id)
+    elif subnet_resource_id:
+        fail("subnetResourceId must be empty for a public load balancer")
+
+    result.update({
+        "load_balancer_name": f"lb-{app}-{env}-{suffix(request)}"[:80].rstrip("-"),
+        "exposure": exposure,
+        "subnet_id": subnet_resource_id or None,
+        "frontend_private_ip_address": parameters.get("frontendPrivateIpAddress") or None,
+        "frontend_port": parameters["frontendPort"],
+        "backend_port": parameters["backendPort"],
+        "protocol": parameters["protocol"],
+        "probe_protocol": parameters["probeProtocol"],
+        "probe_port": parameters["probePort"],
+        "probe_request_path": parameters.get("probeRequestPath") or None,
+        "idle_timeout_in_minutes": parameters["idleTimeoutMinutes"],
+        "tags": {**result["tags"], "billing_impact": "load-balancer"},
+    })
+    return result
+
+
+def vpn_gateway_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    vnet = parse_private_ipv4_cidr("addressSpace", parameters["addressSpace"])
+    gateway_subnet = parse_private_ipv4_cidr("gatewaySubnetPrefix", parameters["gatewaySubnetPrefix"])
+    if not gateway_subnet.subnet_of(vnet) or gateway_subnet.prefixlen <= vnet.prefixlen:
+        fail("gatewaySubnetPrefix: must be a proper subnet of addressSpace")
+
+    result = common(request)
+    app = slug(request["metadata"]["application"])
+    env = request["spec"]["environment"]
+    result.update({
+        "virtual_network_name": f"vnet-vpn-{app}-{env}-{suffix(request)}"[:64].rstrip("-"),
+        "address_space": [str(vnet)],
+        "gateway_subnet_prefix": str(gateway_subnet),
+        "public_ip_name": f"pip-vpngw-{app}-{env}-{suffix(request)}"[:80].rstrip("-"),
+        "gateway_name": f"vpngw-{app}-{env}-{suffix(request)}"[:80].rstrip("-"),
+        "sku": parameters["sku"],
+        "bgp_enabled": parameters["bgpEnabled"],
+        "active_active": False,
+        "tags": {**result["tags"], "billing_impact": "vpn-gateway", "secret_mode": "no-psk-in-git"},
+    })
+    return result
+
+
 def service_bus_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
     result = common(request)
     app = compact(request["metadata"]["application"])[:24] or "app"
@@ -337,6 +442,9 @@ RENDERERS = {
     "key-vault": key_vault_tfvars,
     "managed-identity": managed_identity_tfvars,
     "network": network_tfvars,
+    "iam-role-binding": iam_role_binding_tfvars,
+    "load-balancer": load_balancer_tfvars,
+    "vpn-gateway": vpn_gateway_tfvars,
     "service-bus": service_bus_tfvars,
     "managed-redis": managed_redis_tfvars,
     "postgresql-flexible": postgresql_flexible_tfvars,

@@ -1,0 +1,17 @@
+{
+  "dev": {
+    "enabled": true,
+    "allowedSku": ["VpnGw1"],
+    "requiredEquals": {"bgpEnabled": false}
+  },
+  "test": {
+    "enabled": true,
+    "allowedSku": ["VpnGw1"],
+    "requiredEquals": {"bgpEnabled": false}
+  },
+  "prod": {
+    "enabled": true,
+    "allowedSku": ["VpnGw1", "VpnGw2"],
+    "requiredEquals": {"bgpEnabled": false}
+  }
+}
