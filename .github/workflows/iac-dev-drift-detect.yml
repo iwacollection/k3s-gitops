@@ -115,7 +115,7 @@ jobs:
       ARM_CLIENT_ID: ${{ needs.binding-gate.outputs.client_id }}
       ARM_TENANT_ID: ${{ needs.binding-gate.outputs.tenant_id }}
       ARM_SUBSCRIPTION_ID: ${{ needs.binding-gate.outputs.subscription_id }}
-      ARM_SKIP_PROVIDER_REGISTRATION: 'true'
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
       TFSTATE_RESOURCE_GROUP: ${{ needs.binding-gate.outputs.state_rg }}
       TFSTATE_STORAGE_ACCOUNT: ${{ needs.binding-gate.outputs.state_storage }}
     steps:
