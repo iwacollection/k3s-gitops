@@ -16,6 +16,12 @@ on:
       - design/azure-enterprise-control-plane-v1
     paths:
       - 'enterprise-cicd/activation/test/observe-platform-smoke-api.json'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/platform-smoke-test-observe.yml'
+      - 'enterprise-cicd/activation/test/observe-platform-smoke-api.json'
 
 permissions:
   contents: read
