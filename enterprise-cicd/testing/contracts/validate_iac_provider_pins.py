@@ -28,6 +28,7 @@ EXPECTED_VERSION_FILES = {
 AZURERM_RUNTIME_WORKFLOWS = {
     ".github/workflows/iac-request-dev-plan.yml",
     ".github/workflows/iac-request-dev-apply.yml",
+    ".github/workflows/iac-request-protected-capability-apply.yml",
     ".github/workflows/iac-dev-drift-detect.yml",
     ".github/workflows/iac-decommission-dev-plan.yml",
     ".github/workflows/iac-decommission-dev-apply.yml",
