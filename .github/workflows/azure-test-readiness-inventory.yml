@@ -11,6 +11,15 @@ on:
       - 'enterprise-cicd/contracts/environment-contract.json'
       - 'enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json'
       - 'enterprise-cicd/release-requests/platform-smoke-api-to-dev.json'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/azure-test-readiness-inventory.yml'
+      - 'enterprise-cicd/contracts/environment-bindings.json'
+      - 'enterprise-cicd/contracts/environment-contract.json'
+      - 'enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json'
+      - 'enterprise-cicd/release-requests/platform-smoke-api-to-dev.json'
 
 permissions:
   contents: read
