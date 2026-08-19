@@ -53,6 +53,7 @@ jobs:
           test "$(jq -r .metadata.application "$REQUEST")" = "$(jq -r .metadata.application "$DEV_REQUEST")"
           test "$(jq -r .spec.artifactRepository "$REQUEST")" = "$(jq -r .spec.artifactRepository "$DEV_REQUEST")"
           test "$DIGEST" = "$(jq -r .spec.artifactDigest "$DEV_REQUEST")"
+          test "$(jq -r .spec.sourceReleaseRequest "$REQUEST")" = "$DEV_REQUEST"
 
           BINDING=enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json
           test -f "$BINDING"
@@ -112,11 +113,24 @@ jobs:
           set -euo pipefail
           az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --overwrite-existing
           kubelogin convert-kubeconfig -l azurecli
-          kubectl auth can-i get deployments.apps --namespace cicd-test | grep -qx yes
-          kubectl auth can-i get endpointslices.discovery.k8s.io --namespace cicd-test | grep -qx yes
-          test "$(kubectl auth can-i create deployments.apps --namespace cicd-test)" = no
-          test "$(kubectl auth can-i patch deployments.apps --namespace cicd-test)" = no
-          test "$(kubectl auth can-i delete deployments.apps --namespace cicd-test)" = no
+
+          READ_DEPLOY="$(kubectl auth can-i get deployments.apps --namespace cicd-test 2>&1 || true)"
+          READ_ENDPOINT="$(kubectl auth can-i get endpointslices.discovery.k8s.io --namespace cicd-test 2>&1 || true)"
+          CREATE_DEPLOY="$(kubectl auth can-i create deployments.apps --namespace cicd-test 2>&1 || true)"
+          PATCH_DEPLOY="$(kubectl auth can-i patch deployments.apps --namespace cicd-test 2>&1 || true)"
+          DELETE_DEPLOY="$(kubectl auth can-i delete deployments.apps --namespace cicd-test 2>&1 || true)"
+
+          echo "deployment_read=$READ_DEPLOY"
+          echo "endpoint_read=$READ_ENDPOINT"
+          echo "deployment_create=$CREATE_DEPLOY"
+          echo "deployment_patch=$PATCH_DEPLOY"
+          echo "deployment_delete=$DELETE_DEPLOY"
+
+          grep -Eq '^yes([[:space:]]|$)' <<<"$READ_DEPLOY"
+          grep -Eq '^yes([[:space:]]|$)' <<<"$READ_ENDPOINT"
+          grep -Eq '^no([[:space:]-]|$)' <<<"$CREATE_DEPLOY"
+          grep -Eq '^no([[:space:]-]|$)' <<<"$PATCH_DEPLOY"
+          grep -Eq '^no([[:space:]-]|$)' <<<"$DELETE_DEPLOY"
 
       - name: Wait for TEST Flux and exact DEV-approved digest
         shell: bash
@@ -185,18 +199,7 @@ jobs:
           AVAILABLE="$(jq -r '.status.availableReplicas // 0' platform-test-observation/deployment.json)"
           READY="$(jq -r '.status.readyReplicas // 0' platform-test-observation/deployment.json)"
           READY_ENDPOINTS="$(jq '[.items[].endpoints[]? | select(.conditions.ready == true)] | length' platform-test-observation/endpoints.json)"
-          jq -n \
-            --arg app "$APP" \
-            --arg image "$IMAGE" \
-            --arg repository "$REPOSITORY" \
-            --arg digest "$DIGEST" \
-            --arg gitopsCommit "$GITOPS_COMMIT" \
-            --arg releaseRequest "$RELEASE_REQUEST" \
-            --argjson desired "$DESIRED" \
-            --argjson available "$AVAILABLE" \
-            --argjson ready "$READY" \
-            --argjson readyEndpoints "$READY_ENDPOINTS" \
-            '{apiVersion:"platform.verification/v1",kind:"TestDeploymentVerification",application:$app,environment:"test",releaseRequest:$releaseRequest,gitopsCommit:$gitopsCommit,artifact:{repository:$repository,digest:$digest,deployedImage:$image,sameDigestFromDev:true},status:{desiredReplicas:$desired,availableReplicas:$available,readyReplicas:$ready,readyEndpoints:$readyEndpoints,fluxCompliant:true,mutationAccess:false,result:"passed"}}' > platform-test-observation/verification.json
+          jq -n --arg app "$APP" --arg image "$IMAGE" --arg repository "$REPOSITORY" --arg digest "$DIGEST" --arg gitopsCommit "$GITOPS_COMMIT" --arg releaseRequest "$RELEASE_REQUEST" --argjson desired "$DESIRED" --argjson available "$AVAILABLE" --argjson ready "$READY" --argjson readyEndpoints "$READY_ENDPOINTS" '{apiVersion:"platform.verification/v1",kind:"TestDeploymentVerification",application:$app,environment:"test",releaseRequest:$releaseRequest,gitopsCommit:$gitopsCommit,artifact:{repository:$repository,digest:$digest,deployedImage:$image,sameDigestFromDev:true},status:{desiredReplicas:$desired,availableReplicas:$available,readyReplicas:$ready,readyEndpoints:$readyEndpoints,fluxCompliant:true,mutationAccess:false,result:"passed"}}' > platform-test-observation/verification.json
           cat platform-test-observation/verification.json
 
       - uses: actions/upload-artifact@v4
