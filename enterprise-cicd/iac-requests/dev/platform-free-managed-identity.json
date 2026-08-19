@@ -1,0 +1,19 @@
+{
+  "apiVersion": "platform.iac/v1",
+  "kind": "InfrastructureRequest",
+  "metadata": {
+    "name": "platform-free-managed-identity",
+    "owner": "platform-sre",
+    "application": "iac-free-lab",
+    "costCenter": "platform-lab"
+  },
+  "spec": {
+    "environment": "dev",
+    "region": "eastus",
+    "service": "managed-identity",
+    "templateVersion": "v1",
+    "parameters": {
+      "purpose": "iac-e2e-validation"
+    }
+  }
+}
