@@ -19,9 +19,14 @@ TARGET_RESOURCE_GROUP="group-test"
 AKS_CLUSTER="k8s-test-cicd"
 TEST_NAMESPACE="cicd-test"
 ACR_NAME="acrcicdc12c3a3699d8"
+RESULT_FILE="${TEST_IDENTITY_RESULT_FILE:-test-identity-activation-result.json}"
 
 command -v az >/dev/null 2>&1 || {
   echo "Azure CLI is required." >&2
+  exit 1
+}
+command -v jq >/dev/null 2>&1 || {
+  echo "jq is required." >&2
   exit 1
 }
 
@@ -46,6 +51,7 @@ federated_subject=${SUBJECT}
 target_aks=${AKS_CLUSTER}
 target_namespace=${TEST_NAMESPACE}
 target_acr=${ACR_NAME}
+result_file=${RESULT_FILE}
 
 Planned writes:
 1. Create/reuse dedicated TEST user-assigned managed identity.
@@ -125,6 +131,40 @@ ensure_role "Azure Kubernetes Service Cluster User Role" "$AKS_ID"
 ensure_role "Azure Kubernetes Service RBAC Reader" "$TEST_NAMESPACE_SCOPE"
 ensure_role "AcrPull" "$ACR_ID"
 
+jq -n \
+  --arg clientId "$CLIENT_ID" \
+  --arg principalId "$PRINCIPAL_ID" \
+  --arg tenantId "$TENANT_ID" \
+  --arg subscriptionId "$SUBSCRIPTION_ID" \
+  --arg resourceId "$IDENTITY_ID" \
+  --arg subject "$SUBJECT" \
+  --arg resourceGroupScope "$RG_ID" \
+  --arg aksScope "$AKS_ID" \
+  --arg namespaceScope "$TEST_NAMESPACE_SCOPE" \
+  --arg acrScope "$ACR_ID" \
+  '{
+    apiVersion:"platform.activation/v1",
+    kind:"IdentityActivationResult",
+    metadata:{environment:"test",identity:"k3s-gitops-test-uami"},
+    spec:{
+      githubOidc:{
+        principalType:"UserAssignedManagedIdentity",
+        clientId:$clientId,
+        principalId:$principalId,
+        tenantId:$tenantId,
+        subscriptionId:$subscriptionId,
+        resourceId:$resourceId,
+        federatedSubject:$subject
+      },
+      roleAssignments:[
+        {role:"Reader",scope:$resourceGroupScope},
+        {role:"Azure Kubernetes Service Cluster User Role",scope:$aksScope},
+        {role:"Azure Kubernetes Service RBAC Reader",scope:$namespaceScope},
+        {role:"AcrPull",scope:$acrScope}
+      ]
+    }
+  }' > "$RESULT_FILE"
+
 cat <<EOF
 =========================================
  TEST IDENTITY ACTIVATED
@@ -135,7 +175,8 @@ tenantId=${TENANT_ID}
 subscriptionId=${SUBSCRIPTION_ID}
 resourceId=${IDENTITY_ID}
 federatedSubject=${SUBJECT}
+resultFile=${RESULT_FILE}
 
 Next governed step:
-Update enterprise-cicd/contracts/environment-bindings.json test.identities.githubOidc with these exact IDs, then re-run Azure TEST Readiness Inventory.
+Use ${RESULT_FILE} to update enterprise-cicd/contracts/environment-bindings.json test.identities.githubOidc, then re-run Azure TEST Readiness Inventory.
 EOF
