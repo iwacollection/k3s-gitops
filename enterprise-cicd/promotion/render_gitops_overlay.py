@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 VALID_ENVIRONMENTS = {"dev", "test", "prod"}
+VALID_NAMESPACE_MANAGEMENT = {"gitops", "arm"}
 
 
 def load_json(path: Path):
@@ -19,7 +20,10 @@ def fail(message: str) -> None:
     raise SystemExit(message)
 
 
-def write_environment_root(environment_dir: Path) -> None:
+def write_environment_root(environment_dir: Path, namespace_management: str) -> None:
+    if namespace_management not in VALID_NAMESPACE_MANAGEMENT:
+        fail(f"unsupported namespace management mode: {namespace_management}")
+
     app_resources = []
     apps_dir = environment_dir / "apps"
     if apps_dir.is_dir():
@@ -31,8 +35,9 @@ def write_environment_root(environment_dir: Path) -> None:
         "apiVersion: kustomize.config.k8s.io/v1beta1",
         "kind: Kustomization",
         "resources:",
-        "  - namespace.yaml",
     ]
+    if namespace_management == "gitops":
+        lines.append("  - namespace.yaml")
     lines.extend(f"  - {resource}" for resource in app_resources)
     (environment_dir / "kustomization.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -41,6 +46,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Render a governed release request into a Flux/Kustomize environment overlay.")
     parser.add_argument("--request", required=True, type=Path)
     parser.add_argument("--gitops-root", type=Path, default=ROOT / "gitops")
+    parser.add_argument("--namespace-management", choices=sorted(VALID_NAMESPACE_MANAGEMENT), default="gitops")
     args = parser.parse_args()
 
     request = load_json(args.request)
@@ -131,11 +137,12 @@ def main() -> None:
             "executionEngine": execution.get("engine"),
             "changeReason": spec.get("changeReason", ""),
             "sourceRequest": args.request.as_posix(),
+            "namespaceManagement": args.namespace_management,
         },
     }
     (overlay_dir / "release-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
 
-    write_environment_root(environment_dir)
+    write_environment_root(environment_dir, args.namespace_management)
 
     print(json.dumps({
         "environment": target_environment,
@@ -145,6 +152,7 @@ def main() -> None:
         "releaseProfile": release_profile,
         "strategy": strategy,
         "executionEngine": execution.get("engine"),
+        "namespaceManagement": args.namespace_management,
     }, indent=2))
 
 
