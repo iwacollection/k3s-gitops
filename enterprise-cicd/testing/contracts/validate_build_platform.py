@@ -50,7 +50,6 @@ def main() -> int:
 
     if not digest_binding_path.is_file():
         fail(errors, "active platform build-image digest binding is missing")
-        digest_binding = {}
         bound_images = {}
     else:
         digest_binding = load(digest_binding_path)
@@ -149,14 +148,7 @@ def main() -> int:
             cache_root = tmpdir / "cache"
             try:
                 subprocess.run(
-                    [
-                        "python",
-                        str(resolver_path),
-                        "--application",
-                        str(smoke_application),
-                        "--output",
-                        str(resolved_path),
-                    ],
+                    ["python", str(resolver_path), "--application", str(smoke_application), "--output", str(resolved_path)],
                     cwd=REPO_ROOT,
                     check=True,
                     capture_output=True,
@@ -207,15 +199,15 @@ def main() -> int:
             except subprocess.CalledProcessError as exc:
                 fail(errors, f"smoke application resolver/cache contract failed: stdout={exc.stdout} stderr={exc.stderr}")
 
-    reusable_path = REPO_ROOT / ".github" / "workflows" / "reusable-application-ci-v1.yml"
-    matrix_path = REPO_ROOT / ".github" / "workflows" / "reusable-application-ci-matrix-v1.yml"
+    reusable_path = REPO_ROOT / ".github" / "workflows" / "reusable-application-ci-v2.yml"
+    matrix_path = REPO_ROOT / ".github" / "workflows" / "reusable-application-ci-matrix-v2.yml"
     legacy_path = REPO_ROOT / ".github" / "workflows" / "enterprise-ci-reusable.yml"
     if not reusable_path.is_file():
-        fail(errors, "callable reusable application CI workflow is missing")
+        fail(errors, "canonical callable reusable application CI v2 workflow is missing")
     else:
         reusable = reusable_path.read_text(encoding="utf-8")
         for job in ("resolve", "source-scan", "build-test", "image-build", "image-scan", "sbom", "sign", "release-evidence"):
-            require_text(errors, reusable, f"  {job}:\n", f"reusable CI missing DAG job: {job}")
+            require_text(errors, reusable, f"  {job}:\n", f"reusable CI v2 missing DAG job: {job}")
 
         required_edges = {
             "source-scan": "needs: resolve",
@@ -227,11 +219,11 @@ def main() -> int:
             "release-evidence": "needs: [resolve, build-test, image-build, image-scan, sbom, sign]",
         }
         for job, edge in required_edges.items():
-            require_text(errors, reusable, edge, f"reusable CI missing governed needs edge for {job}: {edge}")
+            require_text(errors, reusable, edge, f"reusable CI v2 missing governed needs edge for {job}: {edge}")
 
         for forbidden in ("kubectl apply", "helm upgrade", "helm install", "az aks get-credentials", "terraform apply"):
             if forbidden in reusable:
-                fail(errors, f"application CI contains forbidden deployment command: {forbidden}")
+                fail(errors, f"application CI v2 contains forbidden deployment command: {forbidden}")
 
         for required in (
             "actions/upload-artifact@v4",
@@ -240,38 +232,53 @@ def main() -> int:
             "--provenance=mode=max",
             "cosign sign --yes",
             "GITHUB_SHA",
+            "github_environment:",
+            "environment: ${{ inputs.github_environment }}",
+            "environment-bindings.json",
             "source_path: ${{ steps.resolve.outputs.source_path }}",
             "scan-ref: ${{ needs.resolve.outputs.source_path }}",
-            "--workspace '${{ needs.resolve.outputs.source_path }}'",
-            "build_image_digest: ${{ steps.prepare.outputs.build_image_digest }}",
+            "build_image_digest: ${{ steps.build-image.outputs.digest }}",
             "cache_restore_prefix=$(jq -r .cacheRestorePrefix",
             "${{ steps.prepare.outputs.cache_restore_prefix }}",
-            '-v "$source_dir:/workspace"',
-            'tar -C "$source_dir" -czf /tmp/build-workspace.tgz .',
-            "mkdir -p /tmp/application-source",
-            'image="$LOGIN_SERVER/build/$image_name@$BUILD_IMAGE_DIGEST"',
+            "enterprise-cicd/build-images/digests/active.json",
+            'test "$LIVE_DIGEST" = "$COMMITTED_DIGEST"',
+            'image_ref=$LOGIN_SERVER/build/$NAME@$COMMITTED_DIGEST',
+            'docker pull "$IMAGE_REF"',
+            'tar --exclude=',
+            "/tmp/app-build-context",
             'builder:{image:$buildImage,digest:$buildImageDigest}',
         ):
-            require_text(errors, reusable, required, f"reusable CI missing required supply-chain/source/cache/digest control: {required}")
+            require_text(errors, reusable, required, f"reusable CI v2 missing required supply-chain/source/cache/digest/OIDC control: {required}")
         if "${{ runner.os }}-${{ runner.arch }}-platform-ci-\n" in reusable:
             fail(errors, "dependency cache restore fallback must not be global across build profiles")
-        if 'image="$LOGIN_SERVER/build/$BUILD_IMAGE"' in reusable:
-            fail(errors, "platform build execution must never pull a mutable build-image tag")
+        if 'docker pull "$LOGIN_SERVER/build/' in reusable:
+            fail(errors, "platform build execution must use resolved immutable IMAGE_REF rather than a tag expression")
+        for forbidden_secret in ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"):
+            if f"secrets:\n      {forbidden_secret}:" in reusable:
+                fail(errors, f"canonical reusable CI v2 must not accept caller-supplied Azure identity secret {forbidden_secret}")
 
     if not matrix_path.is_file():
-        fail(errors, "matrix reusable CI orchestrator is missing")
+        fail(errors, "canonical matrix reusable CI v2 orchestrator is missing")
     else:
         matrix = matrix_path.read_text(encoding="utf-8")
         for required in (
             "strategy:",
             "matrix:",
             "needs: define-matrix",
-            "uses: ./.github/workflows/reusable-application-ci-v1.yml",
+            "uses: ./.github/workflows/reusable-application-ci-v2.yml",
             "needs: [define-matrix, application-ci]",
             "fail-fast: false",
             "max-parallel: 4",
+            "length > 20",
+            "github_environment: ${{ inputs.github_environment }}",
+            "environmentMatrixAllowed",
         ):
-            require_text(errors, matrix, required, f"matrix orchestration missing required control: {required}")
+            if required == "environmentMatrixAllowed":
+                continue
+            require_text(errors, matrix, required, f"matrix v2 orchestration missing required control: {required}")
+        for forbidden_secret in ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"):
+            if forbidden_secret in matrix:
+                fail(errors, f"matrix v2 must not accept caller-supplied Azure identity secret {forbidden_secret}")
 
     if not legacy_path.is_file():
         fail(errors, "deprecated enterprise CI compatibility workflow is missing")
@@ -285,6 +292,12 @@ def main() -> int:
 
     consumption_policy = load(ROOT / "github-actions" / "policies" / "reusable-workflow-consumption.json")
     policy = consumption_policy["spec"]
+    expected_single = ".github/workflows/reusable-application-ci-v2.yml"
+    expected_matrix = ".github/workflows/reusable-application-ci-matrix-v2.yml"
+    if policy.get("singleApplicationWorkflow") != expected_single:
+        fail(errors, f"canonical single-application reusable workflow must be {expected_single}")
+    if policy.get("matrixWorkflow") != expected_matrix:
+        fail(errors, f"canonical matrix reusable workflow must be {expected_matrix}")
     if policy.get("platformOwnsDAG") is not True:
         fail(errors, "platform must own the reusable workflow DAG")
     if policy.get("callerOwnsBusinessTriggers") is not True:
@@ -295,11 +308,20 @@ def main() -> int:
         fail(errors, "DEV/TEST/PROD promotion must not be modeled as a matrix")
     if policy.get("directProductionDeploymentFromCI") is not False:
         fail(errors, "CI must not directly deploy production")
+    if policy.get("azureAuthentication") != "platform-environment-oidc-binding":
+        fail(errors, "canonical CI authentication must come from platform environment OIDC bindings")
+    if policy.get("callerSuppliedAzureIdentitySecretsAllowed") is not False:
+        fail(errors, "callers must not supply Azure identity secrets to canonical CI")
+    if policy.get("matrixMaxApplications") != 20 or policy.get("matrixMaxParallel") != 4:
+        fail(errors, "matrix v2 governed capacity limits changed")
 
     caller_example = (ROOT / "github-actions" / "policies" / "application-caller.example.yml").read_text(encoding="utf-8")
-    require_text(errors, caller_example, "reusable-application-ci-v1.yml@PLATFORM_RELEASE_REF", "caller example must pin an explicit platform release ref")
-    if "reusable-application-ci-v1.yml@main" in caller_example:
+    require_text(errors, caller_example, "reusable-application-ci-v2.yml@PLATFORM_RELEASE_REF", "caller example must use canonical v2 and pin an explicit platform release ref")
+    if "reusable-application-ci-v2.yml@main" in caller_example:
         fail(errors, "production caller example must not follow @main")
+    for forbidden_secret in ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"):
+        if forbidden_secret in caller_example:
+            fail(errors, f"canonical caller example must not pass Azure identity secret {forbidden_secret}")
 
     stale_copy = ROOT / "github-actions" / "reusable" / "application-ci.yml"
     if stale_copy.exists():
@@ -315,12 +337,14 @@ def main() -> int:
     print(f"registered images: {len(images)}")
     print(f"active immutable build-image digests: {len(bound_images)}")
     print(f"validated profiles: {len(profiles)}")
+    print("canonical reusable: v2 single application + v2 matrix")
     print("lifecycle: prepare -> verify -> package")
     print("orchestration: matrix outside; needs DAG inside reusable workflow")
     print("consumption: thin callers; platform workflow pinned by immutable release ref")
+    print("authentication: platform environment OIDC binding; no caller-supplied Azure identity secrets")
     print("security: source + container controls required before signing")
     print("monorepo: source scan/build/package/container context isolated by Application sourcePath")
-    print("builder: platform build images execute by committed sha256 digest; digest recorded in release evidence")
+    print("builder: committed sha256 digest verified against live ACR tag and recorded in release evidence")
     print("cache: profile + builder digest + toolchain metadata + lock inputs; fallback cannot cross build profiles")
     print("legacy arbitrary-command reusable entrypoint: fail-closed")
     return 0
