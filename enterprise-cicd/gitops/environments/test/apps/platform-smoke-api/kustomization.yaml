@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cicd-test
+resources:
+  - ../../../../apps/platform-smoke-api/base
+images:
+  - name: platform.local/platform-smoke-api
+    newName: acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api
+    digest: sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba
