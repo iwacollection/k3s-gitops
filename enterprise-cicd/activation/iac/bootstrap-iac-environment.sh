@@ -234,7 +234,7 @@ cat > "$RESULT_FILE" <<EOF
     "githubEnvironment": "${PLAN_GITHUB_ENVIRONMENT}",
     "identityName": "${PLAN_IDENTITY_NAME}",
     "clientId": "${PLAN_CLIENT_ID}",
-    "principalId": "${PLAN_PRINCIPAL_ID",
+    "principalId": "${PLAN_PRINCIPAL_ID}",
     "resourceId": "${STATE_RG_SCOPE}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${PLAN_IDENTITY_NAME}",
     "federatedCredential": "${PLAN_FIC_NAME}",
     "stateDataRole": "Storage Blob Data Contributor",
