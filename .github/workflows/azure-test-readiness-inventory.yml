@@ -126,7 +126,7 @@ jobs:
           TEST_FLUX_EXISTS="$(jq -r --arg name "$TEST_FLUX_NAME" '[.[] | select(.name == $name)] | length > 0' test-readiness-evidence/flux-configurations.json)"
           TEST_FLUX_BRANCH_MATCH=false
           if [[ "$TEST_FLUX_EXISTS" == "true" ]]; then
-            TEST_FLUX_BRANCH_MATCH="$(jq -r --arg name "$TEST_FLUX_NAME" --arg branch "$TEST_FLUX_BRANCH" '[.[] | select(.name == $name and .gitRepository.url != null and (.gitRepository.repositoryRef.branch // "") == $branch)] | length > 0' test-readiness-evidence/flux-configurations.json)"
+            TEST_FLUX_BRANCH_MATCH="$(jq -r --arg name "$TEST_FLUX_NAME" --arg branch "$TEST_FLUX_BRANCH" '[.[] | select(.name == $name and (.gitRepository.repositoryRef.branch // "") == $branch)] | length > 0' test-readiness-evidence/flux-configurations.json)"
           fi
 
           ACR_DIGEST="$(az acr repository show --name "$ACR_NAME" --image "${ARTIFACT_REPOSITORY#*.azurecr.io/}@$ARTIFACT_DIGEST" --query digest -o tsv)"
@@ -151,20 +151,27 @@ jobs:
           admin: 'false'
           use-kubelogin: 'true'
 
-      - name: Inventory Kubernetes logical TEST state
+      - name: Verify namespace-scoped DEV inventory access
         id: kubernetes
         shell: bash
         run: |
           set -euo pipefail
           kubectl auth can-i get deployments.apps --namespace cicd-dev | grep -Fx yes
-          kubectl get namespace -o json > test-readiness-evidence/namespaces.json
+          kubectl --namespace cicd-dev get deployment platform-smoke-api -o json > test-readiness-evidence/dev-deployment.json
 
-          if kubectl get namespace cicd-test >/dev/null 2>&1; then
-            TEST_NAMESPACE_EXISTS=true
+          set +e
+          kubectl get namespaces -o json > test-readiness-evidence/namespaces.json 2> test-readiness-evidence/cluster-scope-denied.txt
+          rc=$?
+          set -e
+
+          if [[ "$rc" == "0" ]]; then
+            CLUSTER_SCOPE_VISIBLE=true
           else
-            TEST_NAMESPACE_EXISTS=false
+            CLUSTER_SCOPE_VISIBLE=false
+            rm -f test-readiness-evidence/namespaces.json
           fi
-          echo "test_namespace_exists=$TEST_NAMESPACE_EXISTS" >> "$GITHUB_OUTPUT"
+
+          echo "cluster_scope_visible=$CLUSTER_SCOPE_VISIBLE" >> "$GITHUB_OUTPUT"
 
       - name: Emit TEST readiness evidence
         shell: bash
@@ -173,7 +180,7 @@ jobs:
           TEST_FLUX_EXISTS: ${{ steps.azure.outputs.test_flux_exists }}
           TEST_FLUX_BRANCH_MATCH: ${{ steps.azure.outputs.test_flux_branch_match }}
           ARTIFACT_AVAILABLE: ${{ steps.azure.outputs.artifact_available }}
-          TEST_NAMESPACE_EXISTS: ${{ steps.kubernetes.outputs.test_namespace_exists }}
+          DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE: ${{ steps.kubernetes.outputs.cluster_scope_visible }}
           ARTIFACT_REPOSITORY: ${{ steps.contract.outputs.artifact_repository }}
           ARTIFACT_DIGEST: ${{ steps.contract.outputs.artifact_digest }}
         run: |
@@ -187,6 +194,9 @@ jobs:
             blockers="$(jq -c '. + ["missing-test-flux-configuration"]' <<<"$blockers")"
           elif [[ "$TEST_FLUX_BRANCH_MATCH" != "true" ]]; then
             blockers="$(jq -c '. + ["test-flux-branch-mismatch"]' <<<"$blockers")"
+          fi
+          if [[ "$DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE" == "true" ]]; then
+            blockers="$(jq -c '. + ["dev-inventory-identity-has-unexpected-cluster-scope"]' <<<"$blockers")"
           fi
 
           if [[ "$(jq 'length' <<<"$blockers")" == "0" ]]; then
@@ -203,7 +213,7 @@ jobs:
             --argjson testFluxExists "$TEST_FLUX_EXISTS" \
             --argjson testFluxBranchMatch "$TEST_FLUX_BRANCH_MATCH" \
             --argjson artifactAvailable "$ARTIFACT_AVAILABLE" \
-            --argjson testNamespaceExists "$TEST_NAMESPACE_EXISTS" \
+            --argjson devIdentityClusterScopeVisible "$DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE" \
             --argjson blockers "$blockers" \
             '{
               apiVersion:"platform.activation/v1",
@@ -214,7 +224,13 @@ jobs:
                 physicalBoundary:"shared-lab-aks",
                 logicalBoundaries:{githubEnvironment:"test",gitopsBranch:"gitops/test",namespace:"cicd-test",fluxConfiguration:"enterprise-cicd-test"},
                 artifact:{repository:$repository,digest:$digest,available:$artifactAvailable},
-                checks:{testGithubOidcBinding:$testIdentityConfigured,testFluxConfiguration:$testFluxExists,testFluxBranchMatch:$testFluxBranchMatch,testNamespacePresent:$testNamespaceExists},
+                checks:{
+                  testGithubOidcBinding:$testIdentityConfigured,
+                  testFluxConfiguration:$testFluxExists,
+                  testFluxBranchMatch:$testFluxBranchMatch,
+                  devInventoryIdentityClusterScopeVisible:$devIdentityClusterScopeVisible,
+                  testNamespaceObservation:"deferred-until-test-identity-activation"
+                },
                 blockers:$blockers
               }
             }' > test-readiness-evidence/readiness.json
@@ -227,7 +243,8 @@ jobs:
             echo "- TEST OIDC binding configured: \`$TEST_IDENTITY_CONFIGURED\`"
             echo "- TEST Flux configuration exists: \`$TEST_FLUX_EXISTS\`"
             echo "- TEST Flux branch matches gitops/test: \`$TEST_FLUX_BRANCH_MATCH\`"
-            echo "- cicd-test namespace currently exists: \`$TEST_NAMESPACE_EXISTS\`"
+            echo "- DEV inventory identity has cluster-scope namespace visibility: \`$DEV_IDENTITY_CLUSTER_SCOPE_VISIBLE\`"
+            echo '- TEST namespace observation: deferred until TEST identity activation'
             echo "- Blockers: \`$(jq -c .spec.blockers test-readiness-evidence/readiness.json)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
