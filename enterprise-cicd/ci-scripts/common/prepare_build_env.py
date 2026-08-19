@@ -66,16 +66,24 @@ def main() -> None:
     spec = profile["spec"]
 
     image_registry = load(ROOT / "build-images" / "versions.json")
+    digest_binding = load(ROOT / "build-images" / "digests" / "active.json")
     build_image = spec["buildImage"]
     image_metadata = (image_registry.get("images") or {}).get(build_image)
     if image_metadata is None:
         raise SystemExit(f"build profile references unregistered build image: {build_image}")
+    build_image_digest = ((digest_binding.get("spec") or {}).get("images") or {}).get(build_image)
+    if not isinstance(build_image_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", build_image_digest):
+        raise SystemExit(f"active build image digest binding missing or invalid: {build_image}")
+    image_cache_metadata = {
+        "registry": image_metadata,
+        "activeDigest": build_image_digest,
+    }
 
     cache_hash = digest_inputs(
         profile_name,
         build_image,
         profile,
-        image_metadata,
+        image_cache_metadata,
         spec.get("cacheKeyInputs", []),
         workspace,
     )
@@ -123,6 +131,7 @@ def main() -> None:
     result = {
         "profile": profile_name,
         "buildImage": build_image,
+        "buildImageDigest": build_image_digest,
         "cacheKey": f"{cache_prefix}{cache_hash}",
         "cacheRestorePrefix": cache_prefix,
         "cacheDir": cache_dir.as_posix(),
