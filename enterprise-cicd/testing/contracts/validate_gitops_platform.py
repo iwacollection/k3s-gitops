@@ -74,6 +74,33 @@ def main() -> None:
     require(test_kustomizations["apps-test"]["path"] == "./enterprise-cicd/gitops/environments/test", "apps-test must target the TEST environment root")
     require(test_kustomizations["apps-test"]["prune"] is True, "apps-test pruning must be enabled")
 
+    activation = load(ROOT / "activation" / "test" / "activation-contract.json")
+    activation_spec = activation["spec"]
+    require(activation["metadata"]["environment"] == "test", "TEST activation contract must target test")
+    require(activation["metadata"]["mode"] == "logical-environment-on-shared-aks", "TEST activation must remain logical/shared-AKS")
+    require(activation_spec["physicalBoundary"]["sharedWithDevInLab"] is True, "TEST lab must reuse the DEV physical AKS boundary")
+    require(activation_spec["logicalBoundaries"]["gitopsBranch"] == "gitops/test", "TEST activation must use gitops/test")
+    require(activation_spec["logicalBoundaries"]["kubernetesNamespace"] == "cicd-test", "TEST activation must use cicd-test")
+    require(activation_spec["logicalBoundaries"]["fluxConfiguration"] == "enterprise-cicd-test", "TEST activation must use independent Flux configuration")
+    require(activation_spec["identity"]["strategy"] == "dedicated-user-assigned-managed-identity", "TEST must use a dedicated UAMI")
+    require(activation_spec["identity"]["subject"] == "repo:iwacollection/k3s-gitops:environment:test", "TEST OIDC subject must be environment:test")
+    minimum_roles = {item["role"] for item in activation_spec["identity"]["minimumRoles"]}
+    require(minimum_roles == {"Reader", "Azure Kubernetes Service Cluster User Role", "Azure Kubernetes Service RBAC Reader", "AcrPull"}, "unexpected TEST runtime role set")
+    forbidden_roles = set(activation_spec["identity"]["forbiddenRoles"])
+    require({"Owner", "Contributor", "User Access Administrator", "Azure Kubernetes Service RBAC Writer", "Azure Kubernetes Service RBAC Admin", "AcrPush"}.issubset(forbidden_roles), "TEST activation forbidden-role guard is incomplete")
+    require(activation_spec["artifact"]["sourceEnvironment"] == "dev", "TEST artifact must originate from DEV-approved release")
+    require(activation_spec["artifact"]["targetEnvironment"] == "test", "TEST artifact must target test")
+    require(activation_spec["artifact"]["rebuildAllowed"] is False, "TEST promotion must not rebuild")
+    require(activation_spec["artifact"]["sameDigestRequired"] is True, "TEST promotion must preserve the same digest")
+    dev_release = load(ROOT / "release-requests" / "platform-smoke-api-to-dev.json")
+    require(activation_spec["artifact"]["digest"] == dev_release["spec"]["artifactDigest"], "TEST activation must use the exact DEV-approved digest")
+    controls = activation_spec["controls"]
+    require(controls["defaultMode"] == "plan-only", "TEST activation must default to plan-only")
+    require(controls["applyRequiresExplicitFlag"] is True, "TEST activation must require explicit apply")
+    require(controls["noNewAks"] is True and controls["noNewVnet"] is True, "TEST lab activation must not create AKS/VNet")
+    require(controls["noArtifactRebuild"] is True, "TEST activation must not rebuild the artifact")
+    require(controls["fluxRemainsOnlyKubernetesWriter"] is True, "Flux must remain the TEST Kubernetes writer")
+
     for environment in ("dev", "test", "prod"):
         env_dir = ROOT / "gitops" / "environments" / environment
         require((env_dir / "kustomization.yaml").is_file(), f"missing {environment} Kustomize root")
@@ -96,11 +123,29 @@ def main() -> None:
     require_promotion_branch(promotion_workflow, "test", "gitops/test")
     require_promotion_branch(promotion_workflow, "prod", "gitops/prod")
 
-    bootstrap = (ROOT / "gitops" / "clusters" / "aks-automatic-lab" / "bootstrap-flux-aks.sh").read_text(encoding="utf-8")
-    require("--apply" in bootstrap, "Flux bootstrap must require explicit apply mode")
-    require("PLAN ONLY" in bootstrap, "Flux bootstrap must default to plan-only mode")
-    require('BRANCH="gitops/dev"' in bootstrap, "Flux bootstrap must target gitops/dev")
-    require('APPLY=0' in bootstrap and 'APPLY=1' in bootstrap, "Flux bootstrap must gate mutation behind explicit apply mode")
+    dev_bootstrap = (ROOT / "gitops" / "clusters" / "aks-automatic-lab" / "bootstrap-flux-aks.sh").read_text(encoding="utf-8")
+    require("--apply" in dev_bootstrap, "Flux bootstrap must require explicit apply mode")
+    require("PLAN ONLY" in dev_bootstrap, "Flux bootstrap must default to plan-only mode")
+    require('BRANCH="gitops/dev"' in dev_bootstrap, "Flux bootstrap must target gitops/dev")
+    require('APPLY=0' in dev_bootstrap and 'APPLY=1' in dev_bootstrap, "Flux bootstrap must gate mutation behind explicit apply mode")
+
+    test_identity_bootstrap = (ROOT / "activation" / "test" / "bootstrap-test-identity.sh").read_text(encoding="utf-8")
+    require("PLAN ONLY" in test_identity_bootstrap, "TEST identity bootstrap must default to plan-only")
+    require('APPLY=0' in test_identity_bootstrap and 'APPLY=1' in test_identity_bootstrap, "TEST identity bootstrap must gate writes behind --apply")
+    require('SUBJECT="repo:iwacollection/k3s-gitops:environment:test"' in test_identity_bootstrap, "TEST identity bootstrap must use environment:test OIDC subject")
+    require('ensure_role "Azure Kubernetes Service RBAC Reader" "$TEST_NAMESPACE_SCOPE"' in test_identity_bootstrap, "TEST AKS RBAC Reader must be namespace scoped")
+    require('ensure_role "AcrPull" "$ACR_ID"' in test_identity_bootstrap, "TEST identity must be pull-only on ACR")
+    require('ensure_role "AcrPush"' not in test_identity_bootstrap, "TEST runtime identity must not receive AcrPush")
+    require('ensure_role "Contributor"' not in test_identity_bootstrap, "TEST runtime identity must not receive Contributor")
+    require('ensure_role "Owner"' not in test_identity_bootstrap, "TEST runtime identity must not receive Owner")
+
+    test_flux_bootstrap = (ROOT / "gitops" / "clusters" / "aks-automatic-lab-test" / "bootstrap-flux-aks-test.sh").read_text(encoding="utf-8")
+    require("PLAN ONLY" in test_flux_bootstrap, "TEST Flux bootstrap must default to plan-only")
+    require('APPLY=0' in test_flux_bootstrap and 'APPLY=1' in test_flux_bootstrap, "TEST Flux bootstrap must gate writes behind --apply")
+    require('CONFIG_NAME="enterprise-cicd-test"' in test_flux_bootstrap, "TEST Flux config name changed unexpectedly")
+    require('BRANCH="gitops/test"' in test_flux_bootstrap, "TEST Flux bootstrap must target gitops/test")
+    require('KUSTOMIZATION_NAME="apps-test"' in test_flux_bootstrap, "TEST Flux bootstrap must reconcile apps-test")
+    require("gitops/infrastructure" not in test_flux_bootstrap, "TEST logical Flux configuration must not duplicate shared infrastructure reconciliation")
 
     print("GitOps platform contracts validated.")
 
