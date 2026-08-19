@@ -1,5 +1,9 @@
 {
   "version": 2,
+  "azure": {
+    "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+    "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a"
+  },
   "state": {
     "resourceGroup": "rg-platform-cicd",
     "storageAccount": "sttfstatec12c3a3699d8",
