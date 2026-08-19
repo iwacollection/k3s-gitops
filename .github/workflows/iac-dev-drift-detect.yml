@@ -1,0 +1,278 @@
+name: IaC DEV Drift Detect
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * *'
+  push:
+    branches:
+      - design/azure-enterprise-control-plane-v1
+      - main
+    paths:
+      - '.github/workflows/iac-dev-drift-detect.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iac-dev-drift-detect
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      requests: ${{ steps.requests.outputs.requests }}
+      count: ${{ steps.requests.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover governed DEV requests
+        id: requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          requests = []
+          for path in sorted(Path('enterprise-cicd/iac-requests/dev').glob('*.json')):
+              if path.name.endswith('.example.json'):
+                  continue
+              data = json.loads(path.read_text())
+              if data.get('spec', {}).get('environment') != 'dev':
+                  raise SystemExit(f'non-DEV request found in DEV drift scope: {path}')
+              requests.append(str(path))
+
+          print('requests=' + json.dumps(requests, separators=(',', ':')))
+          print('count=' + str(len(requests)))
+          PY
+
+  binding-gate:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    outputs:
+      client_id: ${{ steps.binding.outputs.client_id }}
+      tenant_id: ${{ steps.binding.outputs.tenant_id }}
+      subscription_id: ${{ steps.binding.outputs.subscription_id }}
+      state_rg: ${{ steps.binding.outputs.state_rg }}
+      state_storage: ${{ steps.binding.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require activated read-only DEV resource-plane identity
+        id: binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/iac-runtime-bindings.json
+          test "$(jq -r '.environments.dev.activationStatus' "$BINDING")" = ready
+          test "$(jq -r '.environments.dev.plan.githubEnvironment' "$BINDING")" = iac-dev-plan
+          test "$(jq -r '.environments.dev.plan.resourceWriteAccess' "$BINDING")" = false
+          test "$(jq -r '.environments.dev.plan.stateDataRole' "$BINDING")" = 'Storage Blob Data Contributor'
+          test "$(jq -r '.environments.dev.plan.stateScope' "$BINDING")" = container
+          test "$(jq -r '.state.sharedKeyAccess' "$BINDING")" = false
+
+          echo "client_id=$(jq -r '.environments.dev.plan.clientId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r '.environments.dev.plan.tenantId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r '.environments.dev.plan.subscriptionId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "state_rg=$(jq -r '.state.resourceGroup' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "state_storage=$(jq -r '.state.storageAccount' "$BINDING")" >> "$GITHUB_OUTPUT"
+
+  drift:
+    needs: [discover, binding-gate]
+    if: ${{ needs.discover.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        request: ${{ fromJSON(needs.discover.outputs.requests) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: iac-dev-plan
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ needs.binding-gate.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.binding-gate.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.binding-gate.outputs.subscription_id }}
+      ARM_SKIP_PROVIDER_REGISTRATION: 'true'
+      TFSTATE_RESOURCE_GROUP: ${{ needs.binding-gate.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.binding-gate.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve request metadata
+        id: request
+        shell: bash
+        env:
+          REQUEST_PATH: ${{ matrix.request }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['REQUEST_PATH'])
+          req = json.loads(path.read_text())
+          spec = req['spec']
+          meta = req['metadata']
+          assert spec['environment'] == 'dev'
+          catalog = json.loads(Path(
+              f"enterprise-cicd/iac-catalog/services/{spec['service']}/{spec['templateVersion']}/catalog.json"
+          ).read_text())
+          assert catalog['lifecycle'] == 'active'
+          print(f"service={spec['service']}")
+          print(f"request_name={meta['name']}")
+          print(f"stack={catalog['rootStack']}")
+          PY
+
+      - name: Azure login using dedicated DEV Plan OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.binding-gate.outputs.client_id }}
+          tenant-id: ${{ needs.binding-gate.outputs.tenant_id }}
+          subscription-id: ${{ needs.binding-gate.outputs.subscription_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Render governed request and remote backend
+        shell: bash
+        env:
+          REQUEST_PATH: ${{ matrix.request }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-drift
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request "$REQUEST_PATH" \
+            --output /tmp/iac-drift/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment dev \
+            --service '${{ steps.request.outputs.service }}' \
+            --request '${{ steps.request.outputs.request_name }}' \
+            --auth oidc \
+            --output /tmp/iac-drift/backend.hcl
+
+      - name: Run convergence plan
+        id: plan
+        shell: bash
+        env:
+          STACK: ${{ steps.request.outputs.stack }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init \
+            -reconfigure \
+            -input=false \
+            -backend-config=/tmp/iac-drift/backend.hcl
+          terraform -chdir="$STACK" validate
+
+          set +e
+          terraform -chdir="$STACK" plan \
+            -detailed-exitcode \
+            -lock=true \
+            -lock-timeout=5m \
+            -input=false \
+            -var-file=/tmp/iac-drift/request.tfvars.json \
+            -out=/tmp/iac-drift/drift.tfplan
+          rc=$?
+          set -e
+
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          if [ -f /tmp/iac-drift/drift.tfplan ]; then
+            terraform -chdir="$STACK" show -json /tmp/iac-drift/drift.tfplan > /tmp/iac-drift/plan.json
+          fi
+
+      - name: Build drift evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee /tmp/iac-drift/drift-summary.json
+          import json
+          from pathlib import Path
+
+          plan_path = Path('/tmp/iac-drift/plan.json')
+          if not plan_path.exists():
+              print(json.dumps({
+                  'request': '${{ steps.request.outputs.request_name }}',
+                  'service': '${{ steps.request.outputs.service }}',
+                  'status': 'terraform-error',
+                  'changes': []
+              }, indent=2))
+              raise SystemExit(0)
+
+          plan = json.loads(plan_path.read_text())
+          changes = []
+          for rc in plan.get('resource_changes', []):
+              actions = rc.get('change', {}).get('actions', [])
+              if actions != ['no-op']:
+                  changes.append({
+                      'address': rc.get('address'),
+                      'actions': actions
+                  })
+
+          print(json.dumps({
+              'request': '${{ steps.request.outputs.request_name }}',
+              'service': '${{ steps.request.outputs.service }}',
+              'status': 'converged' if not changes else 'drift-or-pending-change',
+              'changes': changes,
+              'resourceMutationAllowed': False,
+              'automaticRemediation': False
+          }, indent=2))
+          PY
+
+      - name: Publish drift evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-dev-drift-${{ steps.request.outputs.request_name }}
+          path: |
+            /tmp/iac-drift/request.tfvars.json
+            /tmp/iac-drift/backend.hcl
+            /tmp/iac-drift/plan.json
+            /tmp/iac-drift/drift-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Require desired and actual infrastructure to converge
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rc='${{ steps.plan.outputs.exit_code }}'
+          case "$rc" in
+            0)
+              echo 'IAC_DRIFT=NONE'
+              ;;
+            2)
+              echo 'IAC_DRIFT=DETECTED' >&2
+              exit 2
+              ;;
+            *)
+              echo "IAC_DRIFT=ERROR terraform_exit_code=$rc" >&2
+              exit 1
+              ;;
+          esac
+
+  drift-gate:
+    if: ${{ always() }}
+    needs: [discover, binding-gate, drift]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require clean DEV IaC convergence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ needs.discover.outputs.count }}' = '0' ]; then
+            echo 'No governed DEV InfrastructureRequest exists.'
+            exit 0
+          fi
+          test '${{ needs.binding-gate.result }}' = success
+          test '${{ needs.drift.result }}' = success
+          echo 'DEV_IAC_DRIFT=NONE'
