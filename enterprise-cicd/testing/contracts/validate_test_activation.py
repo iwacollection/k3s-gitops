@@ -30,10 +30,25 @@ def main() -> None:
         "fluxNamespace": "enterprise-cicd-test",
     }, "unexpected TEST logical boundaries")
 
+    github_environment = load(ROOT / "activation" / "test" / "github-environment-policy.json")
+    github_spec = github_environment["spec"]
+    require(github_environment["metadata"]["name"] == "test", "GitHub TEST environment policy must target test")
+    require(github_spec["mustExistBeforeAzureFederation"] is True, "TEST GitHub Environment must pre-exist Azure federation")
+    require(github_spec["implicitCreationAllowed"] is False, "implicit TEST GitHub Environment creation is forbidden")
+    require(github_spec["oidcSubject"] == "repo:iwacollection/k3s-gitops:environment:test", "GitHub TEST environment OIDC subject changed unexpectedly")
+    require(github_spec["deploymentBranchPolicy"]["mode"] == "selected-branches", "TEST GitHub Environment must restrict deployment branches")
+    allowed_branches = set(github_spec["deploymentBranchPolicy"]["allowed"])
+    require("design/azure-enterprise-control-plane-v1" in allowed_branches, "current activation branch must be explicitly allowed in TEST Environment")
+    require("main" in allowed_branches, "main must be predeclared as a trusted TEST Environment branch")
+    require(github_spec["environmentSecretsRequired"] is False, "TEST OIDC must not require long-lived environment secrets")
+    require(github_spec["longLivedAzureCredentialsAllowed"] is False, "long-lived Azure credentials are forbidden in TEST Environment")
+    require(github_spec["requiredWorkflowProperties"]["idTokenWrite"] is True, "TEST workflows must use OIDC id-token write")
+    require(github_spec["requiredWorkflowProperties"]["azureClientSecretForbidden"] is True, "Azure client secrets are forbidden in TEST workflows")
+
     identity = spec["identity"]
     require(identity["strategy"] == "dedicated-user-assigned-managed-identity", "TEST must use a dedicated UAMI")
     require(identity["name"] == "k3s-gitops-test-uami", "unexpected TEST UAMI name")
-    require(identity["subject"] == "repo:iwacollection/k3s-gitops:environment:test", "TEST OIDC subject must be environment:test")
+    require(identity["subject"] == github_spec["oidcSubject"], "Azure TEST federation subject must equal the GitHub Environment trust subject")
 
     role_scopes = {(item["role"], item["scope"]) for item in identity["minimumRoles"]}
     expected_role_scopes = {
