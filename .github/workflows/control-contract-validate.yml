@@ -5,6 +5,10 @@ on:
     paths:
       - 'enterprise-cicd/contracts/**'
       - 'enterprise-cicd/terraform/state/**'
+      - 'enterprise-cicd/activation/iac/**'
+      - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
+      - '.github/workflows/iac-request-dev-plan.yml'
+      - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/control-contract-validate.yml'
   push:
     branches:
@@ -12,6 +16,10 @@ on:
     paths:
       - 'enterprise-cicd/contracts/**'
       - 'enterprise-cicd/terraform/state/**'
+      - 'enterprise-cicd/activation/iac/**'
+      - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
+      - '.github/workflows/iac-request-dev-plan.yml'
+      - '.github/workflows/iac-request-dev-apply.yml'
 
 permissions:
   contents: read
@@ -31,6 +39,9 @@ jobs:
 
       - name: Validate control contracts
         run: python enterprise-cicd/contracts/validate_contracts.py
+
+      - name: Validate IaC control-plane security boundaries
+        run: python enterprise-cicd/testing/contracts/validate_iac_control_plane.py
 
       - name: Test platform backend rendering
         env:
