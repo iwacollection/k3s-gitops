@@ -10,6 +10,7 @@ on:
       - main
     paths:
       - '.github/workflows/iac-dev-drift-detect.yml'
+      - 'enterprise-cicd/iac-decommission/dev/**.json'
 
 permissions:
   contents: read
@@ -26,7 +27,7 @@ jobs:
       count: ${{ steps.requests.outputs.count }}
     steps:
       - uses: actions/checkout@v4
-      - name: Discover governed DEV requests
+      - name: Discover active governed DEV requests
         id: requests
         shell: bash
         run: |
@@ -35,9 +36,25 @@ jobs:
           import json
           from pathlib import Path
 
+          retired = set()
+          tombstone_root = Path('enterprise-cicd/iac-decommission/dev')
+          if tombstone_root.is_dir():
+              for tombstone in sorted(tombstone_root.glob('*.json')):
+                  data = json.loads(tombstone.read_text())
+                  if data.get('kind') != 'DecommissionRequest':
+                      raise SystemExit(f'invalid DEV decommission tombstone kind: {tombstone}')
+                  request_path = (data.get('spec') or {}).get('requestPath')
+                  if not request_path:
+                      raise SystemExit(f'DEV decommission tombstone missing requestPath: {tombstone}')
+                  if request_path in retired:
+                      raise SystemExit(f'duplicate DEV decommission tombstone for {request_path}')
+                  retired.add(request_path)
+
           requests = []
           for path in sorted(Path('enterprise-cicd/iac-requests/dev').glob('*.json')):
               if path.name.endswith('.example.json'):
+                  continue
+              if str(path) in retired:
                   continue
               data = json.loads(path.read_text())
               if data.get('spec', {}).get('environment') != 'dev':
@@ -270,7 +287,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ '${{ needs.discover.outputs.count }}' = '0' ]; then
-            echo 'No governed DEV InfrastructureRequest exists.'
+            echo 'No active governed DEV InfrastructureRequest exists.'
             exit 0
           fi
           test '${{ needs.binding-gate.result }}' = success
