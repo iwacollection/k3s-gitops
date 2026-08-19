@@ -83,7 +83,7 @@ jobs:
 
           for token in (
               'real Terraform Plan',
-              'Entra-only remote-state',
+              'Entra-only remote backend',
               'Deleting an InfrastructureRequest is **not** a destroy mechanism',
               'Owner',
               'Contributor',
