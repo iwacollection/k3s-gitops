@@ -27,7 +27,8 @@ AKS_RBAC_READER_ROLE_ID="7f6c6a51-bcf8-42ba-9220-52d62157d7db"
 ACR_PULL_ROLE_ID="7f951dda-4ed3-4680-a7ca-43fe172d538d"
 
 command -v az >/dev/null 2>&1 || { echo "Azure CLI is required." >&2; exit 1; }
-command -v jq >/dev/null 2>&1 || { echo "jq is required." >&2; exit 1; }
+PYTHON_BIN="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+[[ -n "$PYTHON_BIN" ]] || { echo "Python is required." >&2; exit 1; }
 
 SUBSCRIPTION_ID="$(az account show --query id -o tsv 2>/dev/null)"
 TENANT_ID="$(az account show --query tenantId -o tsv 2>/dev/null)"
@@ -57,6 +58,7 @@ target_aks=${AKS_CLUSTER}
 target_namespace=${TEST_NAMESPACE}
 target_acr=${ACR_NAME}
 result_file=${RESULT_FILE}
+python=${PYTHON_BIN}
 
 Planned writes:
 1. Create/reuse dedicated TEST user-assigned managed identity.
@@ -89,6 +91,7 @@ echo "========================================="
 echo "subscription=${SUBSCRIPTION_ID}"
 echo "tenant=${TENANT_ID}"
 echo "result_file=${RESULT_FILE}"
+echo "python=${PYTHON_BIN}"
 
 echo "[1] Validate target resources"
 az group show --name "$IDENTITY_RESOURCE_GROUP" >/dev/null 2>&1 || { echo "Identity resource group does not exist: $IDENTITY_RESOURCE_GROUP" >&2; exit 1; }
@@ -119,14 +122,13 @@ ensure_role_rest() {
   local role_name="$1"
   local role_id="$2"
   local scope="$3"
-  local list_url encoded_scope existing assignment_id role_definition
+  local list_url existing assignment_id role_definition
 
-  encoded_scope="$scope"
-  list_url="https://management.azure.com${encoded_scope}/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&%24filter=principalId%20eq%20%27${PRINCIPAL_ID}%27"
+  list_url="https://management.azure.com${scope}/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&%24filter=principalId%20eq%20%27${PRINCIPAL_ID}%27"
   existing="$(az rest --method get --url "$list_url" -o json 2>/dev/null || echo '{\"value\":[]}')"
   role_definition="/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.Authorization/roleDefinitions/${role_id}"
 
-  if jq -e --arg rd "$role_definition" '.value[]? | select(.properties.roleDefinitionId == $rd)' >/dev/null 2>&1 <<<"$existing"; then
+  if printf '%s' "$existing" | "$PYTHON_BIN" -c 'import json,sys; data=json.load(sys.stdin); rd=sys.argv[1]; sys.exit(0 if any((x.get("properties") or {}).get("roleDefinitionId") == rd for x in data.get("value", [])) else 1)' "$role_definition"; then
     echo "existing role: ${role_name}"
     return 0
   fi
@@ -147,7 +149,40 @@ az rest --method get --url "$FIC_URL" --query "{name:name,issuer:properties.issu
 
 echo "[6] Write activation evidence"
 mkdir -p "$(dirname "$RESULT_FILE")" 2>/dev/null || true
-jq -n --arg clientId "$CLIENT_ID" --arg principalId "$PRINCIPAL_ID" --arg tenantId "$TENANT_ID" --arg subscriptionId "$SUBSCRIPTION_ID" --arg resourceId "$IDENTITY_ID" --arg subject "$SUBJECT" --arg aksScope "$AKS_ID" --arg namespaceScope "$TEST_NAMESPACE_SCOPE" --arg acrScope "$ACR_ID" '{apiVersion:"platform.activation/v1",kind:"IdentityActivationResult",metadata:{environment:"test",identity:"k3s-gitops-test-uami"},spec:{githubOidc:{principalType:"UserAssignedManagedIdentity",clientId:$clientId,principalId:$principalId,tenantId:$tenantId,subscriptionId:$subscriptionId,resourceId:$resourceId,federatedSubject:$subject},roleAssignments:[{role:"Reader",scope:$aksScope},{role:"Azure Kubernetes Service Cluster User Role",scope:$aksScope},{role:"Azure Kubernetes Service RBAC Reader",scope:$namespaceScope},{role:"AcrPull",scope:$acrScope}]}}' > "$RESULT_FILE" || { echo "Failed to write result file: $RESULT_FILE" >&2; exit 1; }
+"$PYTHON_BIN" - "$RESULT_FILE" "$CLIENT_ID" "$PRINCIPAL_ID" "$TENANT_ID" "$SUBSCRIPTION_ID" "$IDENTITY_ID" "$SUBJECT" "$AKS_ID" "$TEST_NAMESPACE_SCOPE" "$ACR_ID" <<'PY'
+from __future__ import print_function
+import json
+import sys
+
+path, client_id, principal_id, tenant_id, subscription_id, resource_id, subject, aks_scope, namespace_scope, acr_scope = sys.argv[1:]
+data = {
+    "apiVersion": "platform.activation/v1",
+    "kind": "IdentityActivationResult",
+    "metadata": {"environment": "test", "identity": "k3s-gitops-test-uami"},
+    "spec": {
+        "githubOidc": {
+            "principalType": "UserAssignedManagedIdentity",
+            "clientId": client_id,
+            "principalId": principal_id,
+            "tenantId": tenant_id,
+            "subscriptionId": subscription_id,
+            "resourceId": resource_id,
+            "federatedSubject": subject,
+        },
+        "roleAssignments": [
+            {"role": "Reader", "scope": aks_scope},
+            {"role": "Azure Kubernetes Service Cluster User Role", "scope": aks_scope},
+            {"role": "Azure Kubernetes Service RBAC Reader", "scope": namespace_scope},
+            {"role": "AcrPull", "scope": acr_scope},
+        ],
+    },
+}
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+RC=$?
+[[ "$RC" -eq 0 ]] || { echo "Failed to write result file: $RESULT_FILE" >&2; exit 1; }
 
 if [[ ! -s "$RESULT_FILE" ]]; then
   echo "Result file was not created: $RESULT_FILE" >&2
