@@ -7,11 +7,16 @@ on:
       - 'enterprise-cicd/terraform/state/**'
       - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
+      - 'enterprise-cicd/iac-decommission/**'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
+      - '.github/workflows/iac-dev-retirement-guard.yml'
+      - '.github/workflows/iac-decommission-dev-plan.yml'
+      - '.github/workflows/iac-decommission-dev-apply.yml'
       - '.github/workflows/control-contract-validate.yml'
   push:
     branches:
@@ -21,11 +26,16 @@ on:
       - 'enterprise-cicd/terraform/state/**'
       - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
+      - 'enterprise-cicd/iac-decommission/**'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
       - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_decommission.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
       - '.github/workflows/iac-dev-drift-detect.yml'
+      - '.github/workflows/iac-dev-retirement-guard.yml'
+      - '.github/workflows/iac-decommission-dev-plan.yml'
+      - '.github/workflows/iac-decommission-dev-apply.yml'
       - '.github/workflows/control-contract-validate.yml'
 
 permissions:
@@ -52,6 +62,9 @@ jobs:
 
       - name: Validate IaC provider pins
         run: python enterprise-cicd/testing/contracts/validate_iac_provider_pins.py
+
+      - name: Validate governed IaC decommission boundaries
+        run: python enterprise-cicd/testing/contracts/validate_iac_decommission.py
 
       - name: Test platform backend rendering
         env:
