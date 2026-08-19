@@ -56,13 +56,14 @@ result_file=${RESULT_FILE}
 Planned writes:
 1. Create/reuse dedicated TEST user-assigned managed identity.
 2. Create/reuse GitHub OIDC federated credential for environment:test.
-3. Assign Reader on resource group ${TARGET_RESOURCE_GROUP}.
+3. Assign Reader only on AKS ${AKS_CLUSTER} (including its Flux child resources).
 4. Assign Azure Kubernetes Service Cluster User Role on AKS.
 5. Assign Azure Kubernetes Service RBAC Reader only on namespace ${TEST_NAMESPACE}.
 6. Assign AcrPull on ${ACR_NAME}.
 
 Forbidden by contract:
-- Owner / Contributor / User Access Administrator on TEST runtime identity
+- resource-group-wide Reader for the TEST runtime identity
+- Owner / Contributor / User Access Administrator
 - Azure Kubernetes Service RBAC Writer/Admin
 - AcrPush
 - any DEV namespace RBAC grant
@@ -126,7 +127,7 @@ ensure_role() {
   fi
 }
 
-ensure_role "Reader" "$RG_ID"
+ensure_role "Reader" "$AKS_ID"
 ensure_role "Azure Kubernetes Service Cluster User Role" "$AKS_ID"
 ensure_role "Azure Kubernetes Service RBAC Reader" "$TEST_NAMESPACE_SCOPE"
 ensure_role "AcrPull" "$ACR_ID"
@@ -138,7 +139,6 @@ jq -n \
   --arg subscriptionId "$SUBSCRIPTION_ID" \
   --arg resourceId "$IDENTITY_ID" \
   --arg subject "$SUBJECT" \
-  --arg resourceGroupScope "$RG_ID" \
   --arg aksScope "$AKS_ID" \
   --arg namespaceScope "$TEST_NAMESPACE_SCOPE" \
   --arg acrScope "$ACR_ID" \
@@ -157,7 +157,7 @@ jq -n \
         federatedSubject:$subject
       },
       roleAssignments:[
-        {role:"Reader",scope:$resourceGroupScope},
+        {role:"Reader",scope:$aksScope},
         {role:"Azure Kubernetes Service Cluster User Role",scope:$aksScope},
         {role:"Azure Kubernetes Service RBAC Reader",scope:$namespaceScope},
         {role:"AcrPull",scope:$acrScope}
