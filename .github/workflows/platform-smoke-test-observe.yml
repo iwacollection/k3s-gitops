@@ -1,0 +1,207 @@
+name: Platform Smoke TEST Observe
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_request:
+        description: Real committed DEV -> TEST Release Request
+        required: true
+        type: string
+      gitops_commit:
+        description: Merged gitops/test commit expected to be reconciled by Flux
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve governed TEST observation contract
+        id: target
+        shell: bash
+        env:
+          REQUEST: ${{ inputs.release_request }}
+          GITOPS_COMMIT: ${{ inputs.gitops_commit }}
+        run: |
+          set -euo pipefail
+          case "$REQUEST" in
+            enterprise-cicd/release-requests/*.example.json)
+              echo 'Example release requests cannot be observed.' >&2
+              exit 1
+              ;;
+            enterprise-cicd/release-requests/*.json) ;;
+            *) echo 'Release request must be committed under enterprise-cicd/release-requests/.' >&2; exit 1 ;;
+          esac
+          test -f "$REQUEST"
+          [[ "$GITOPS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          test "$(jq -r .spec.from "$REQUEST")" = dev
+          test "$(jq -r .spec.to "$REQUEST")" = test
+          DIGEST="$(jq -r .spec.artifactDigest "$REQUEST")"
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          DEV_REQUEST=enterprise-cicd/release-requests/platform-smoke-api-to-dev.json
+          test -f "$DEV_REQUEST"
+          test "$(jq -r .metadata.application "$REQUEST")" = "$(jq -r .metadata.application "$DEV_REQUEST")"
+          test "$(jq -r .spec.artifactRepository "$REQUEST")" = "$(jq -r .spec.artifactRepository "$DEV_REQUEST")"
+          test "$DIGEST" = "$(jq -r .spec.artifactDigest "$DEV_REQUEST")"
+
+          BINDING=enterprise-cicd/gitops/clusters/aks-automatic-lab-test/cluster.json
+          test -f "$BINDING"
+          test "$(jq -r .metadata.environment "$BINDING")" = test
+          test "$(jq -r .spec.flux.branch "$BINDING")" = gitops/test
+          test "$(jq -r .spec.flux.configurationName "$BINDING")" = enterprise-cicd-test
+
+          echo "resource_group=$(jq -r .spec.azure.resourceGroup "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "cluster=$(jq -r .spec.azure.clusterName "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "flux_name=$(jq -r .spec.flux.configurationName "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "application=$(jq -r .metadata.application "$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "repository=$(jq -r .spec.artifactRepository "$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "gitops_commit=$GITOPS_COMMIT" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve TEST OIDC identity
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          CLIENT_ID="$(jq -r '.environments.test.identities.githubOidc.clientId // empty' "$BINDING")"
+          TENANT_ID="$(jq -r '.environments.test.identities.githubOidc.tenantId // empty' "$BINDING")"
+          SUBSCRIPTION_ID="$(jq -r '.environments.test.identities.githubOidc.subscriptionId // empty' "$BINDING")"
+          PRINCIPAL_ID="$(jq -r '.environments.test.identities.githubOidc.principalId // empty' "$BINDING")"
+          test -n "$CLIENT_ID"
+          test -n "$TENANT_ID"
+          test -n "$SUBSCRIPTION_ID"
+          test -n "$PRINCIPAL_ID"
+          DEV_PRINCIPAL="$(jq -r '.environments.dev.identities.githubOidc.principalId // empty' "$BINDING")"
+          test "$PRINCIPAL_ID" != "$DEV_PRINCIPAL"
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$TENANT_ID" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$SUBSCRIPTION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login with TEST OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+
+      - uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.7
+
+      - name: Set namespace-scoped TEST read context
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster }}
+        run: |
+          set -euo pipefail
+          az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl auth can-i get deployments.apps --namespace cicd-test | grep -qx yes
+          kubectl auth can-i get endpointslices.discovery.k8s.io --namespace cicd-test | grep -qx yes
+          test "$(kubectl auth can-i create deployments.apps --namespace cicd-test)" = no
+          test "$(kubectl auth can-i patch deployments.apps --namespace cicd-test)" = no
+          test "$(kubectl auth can-i delete deployments.apps --namespace cicd-test)" = no
+
+      - name: Wait for TEST Flux and exact DEV-approved digest
+        shell: bash
+        env:
+          SUBSCRIPTION_ID: ${{ steps.auth.outputs.subscription_id }}
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster }}
+          FLUX_NAME: ${{ steps.target.outputs.flux_name }}
+          APP: ${{ steps.target.outputs.application }}
+          REPOSITORY: ${{ steps.target.outputs.repository }}
+          DIGEST: ${{ steps.target.outputs.digest }}
+          GITOPS_COMMIT: ${{ steps.target.outputs.gitops_commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p platform-test-observation
+          FLUX_URL="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.ContainerService/managedClusters/$CLUSTER/providers/Microsoft.KubernetesConfiguration/fluxConfigurations/$FLUX_NAME?api-version=2025-04-01"
+          EXPECTED_IMAGE="$REPOSITORY@$DIGEST"
+          passed=false
+          for i in $(seq 1 60); do
+            flux_json="$(az rest --method get --url "$FLUX_URL" -o json)"
+            compliance="$(jq -r '.properties.complianceState // empty' <<<"$flux_json")"
+            synced="$(jq -r '.properties.sourceSyncedCommitId // empty' <<<"$flux_json")"
+            deployment_json="$(kubectl -n cicd-test get deployment "$APP" -o json 2>/dev/null || true)"
+            if [[ -n "$deployment_json" ]]; then
+              image="$(jq -r '.spec.template.spec.containers[0].image // empty' <<<"$deployment_json")"
+              desired="$(jq -r '.spec.replicas // 0' <<<"$deployment_json")"
+              available="$(jq -r '.status.availableReplicas // 0' <<<"$deployment_json")"
+              ready="$(jq -r '.status.readyReplicas // 0' <<<"$deployment_json")"
+            else
+              image=""; desired=0; available=0; ready=0
+            fi
+            echo "attempt=$i flux=$compliance synced=$synced image=$image ready=$ready available=$available/$desired"
+            if [[ "$compliance" == "Compliant" ]] && [[ "$synced" == *"$GITOPS_COMMIT"* ]] && [[ "$image" == "$EXPECTED_IMAGE" ]] && [[ "$desired" -ge 1 ]] && [[ "$available" -eq "$desired" ]] && [[ "$ready" -eq "$desired" ]]; then
+              printf '%s\n' "$flux_json" > platform-test-observation/flux.json
+              printf '%s\n' "$deployment_json" > platform-test-observation/deployment.json
+              passed=true
+              break
+            fi
+            sleep 10
+          done
+          test "$passed" = true
+
+      - name: Verify TEST ready EndpointSlice
+        shell: bash
+        env:
+          APP: ${{ steps.target.outputs.application }}
+        run: |
+          set -euo pipefail
+          kubectl -n cicd-test get endpointslices.discovery.k8s.io --selector "kubernetes.io/service-name=$APP" -o json > platform-test-observation/endpoints.json
+          READY_ENDPOINTS="$(jq '[.items[].endpoints[]? | select(.conditions.ready == true)] | length' platform-test-observation/endpoints.json)"
+          test "$READY_ENDPOINTS" -ge 1
+          echo "ready_endpoints=$READY_ENDPOINTS"
+
+      - name: Emit immutable TEST verification evidence
+        shell: bash
+        env:
+          APP: ${{ steps.target.outputs.application }}
+          REPOSITORY: ${{ steps.target.outputs.repository }}
+          DIGEST: ${{ steps.target.outputs.digest }}
+          GITOPS_COMMIT: ${{ steps.target.outputs.gitops_commit }}
+          RELEASE_REQUEST: ${{ inputs.release_request }}
+        run: |
+          set -euo pipefail
+          IMAGE="$(jq -r '.spec.template.spec.containers[0].image' platform-test-observation/deployment.json)"
+          DESIRED="$(jq -r '.spec.replicas // 0' platform-test-observation/deployment.json)"
+          AVAILABLE="$(jq -r '.status.availableReplicas // 0' platform-test-observation/deployment.json)"
+          READY="$(jq -r '.status.readyReplicas // 0' platform-test-observation/deployment.json)"
+          READY_ENDPOINTS="$(jq '[.items[].endpoints[]? | select(.conditions.ready == true)] | length' platform-test-observation/endpoints.json)"
+          jq -n \
+            --arg app "$APP" \
+            --arg image "$IMAGE" \
+            --arg repository "$REPOSITORY" \
+            --arg digest "$DIGEST" \
+            --arg gitopsCommit "$GITOPS_COMMIT" \
+            --arg releaseRequest "$RELEASE_REQUEST" \
+            --argjson desired "$DESIRED" \
+            --argjson available "$AVAILABLE" \
+            --argjson ready "$READY" \
+            --argjson readyEndpoints "$READY_ENDPOINTS" \
+            '{apiVersion:"platform.verification/v1",kind:"TestDeploymentVerification",application:$app,environment:"test",releaseRequest:$releaseRequest,gitopsCommit:$gitopsCommit,artifact:{repository:$repository,digest:$digest,deployedImage:$image,sameDigestFromDev:true},status:{desiredReplicas:$desired,availableReplicas:$available,readyReplicas:$ready,readyEndpoints:$readyEndpoints,fluxCompliant:true,mutationAccess:false,result:"passed"}}' > platform-test-observation/verification.json
+          cat platform-test-observation/verification.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-smoke-test-verification-${{ github.run_id }}
+          path: platform-test-observation/
+          if-no-files-found: error
+          retention-days: 90
