@@ -136,7 +136,7 @@ jobs:
       ARM_CLIENT_ID: ${{ needs.binding-gate.outputs.client_id }}
       ARM_TENANT_ID: ${{ needs.binding-gate.outputs.tenant_id }}
       ARM_SUBSCRIPTION_ID: ${{ needs.binding-gate.outputs.subscription_id }}
-      ARM_SKIP_PROVIDER_REGISTRATION: 'true'
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
       TFSTATE_RESOURCE_GROUP: ${{ needs.binding-gate.outputs.state_rg }}
       TFSTATE_STORAGE_ACCOUNT: ${{ needs.binding-gate.outputs.state_storage }}
     steps:
@@ -161,9 +161,10 @@ jobs:
           assert spec['environment'] == 'dev'
           service = spec['service']
           version = spec['templateVersion']
-          if service != 'managed-identity':
+          supported_services = {'managed-identity', 'network'}
+          if service not in supported_services:
               raise SystemExit(
-                  f'GitHub DEV Apply v1 is intentionally permission-scoped to managed-identity; service={service} requires an explicit Apply capability extension'
+                  f'GitHub DEV Apply is intentionally capability-scoped; service={service} is not activated; supported={sorted(supported_services)}'
               )
           catalog = json.loads(Path(f'enterprise-cicd/iac-catalog/services/{service}/{version}/catalog.json').read_text())
           assert catalog['lifecycle'] == 'active'
@@ -259,22 +260,24 @@ jobs:
         shell: bash
         env:
           STACK: ${{ steps.request.outputs.stack }}
+          SERVICE: ${{ steps.request.outputs.service }}
         run: |
           set -euo pipefail
           RG="$(jq -r '.resource_group_name' /tmp/iac-apply/request.tfvars.json)"
-          IDENTITY="$(jq -r '.identity_name' /tmp/iac-apply/request.tfvars.json)"
 
           az group show --name "$RG" \
             --query '{id:id,name:name,location:location,provisioningState:properties.provisioningState,tags:tags}' \
             -o json > /tmp/iac-apply/resource-group-verification.json
 
-          az identity show --resource-group "$RG" --name "$IDENTITY" \
-            --query '{id:id,name:name,location:location,clientId:clientId,principalId:principalId,tags:tags}' \
-            -o json > /tmp/iac-apply/managed-identity-verification.json
-
           terraform -chdir="$STACK" output -json > /tmp/iac-apply/terraform-outputs.json
 
-          python - <<'PY' | tee /tmp/iac-apply/verification-summary.json
+          if [ "$SERVICE" = "managed-identity" ]; then
+            IDENTITY="$(jq -r '.identity_name' /tmp/iac-apply/request.tfvars.json)"
+            az identity show --resource-group "$RG" --name "$IDENTITY" \
+              --query '{id:id,name:name,location:location,clientId:clientId,principalId:principalId,tags:tags}' \
+              -o json > /tmp/iac-apply/managed-identity-verification.json
+
+            python - <<'PY' | tee /tmp/iac-apply/verification-summary.json
           import json
           tfvars = json.load(open('/tmp/iac-apply/request.tfvars.json'))
           rg = json.load(open('/tmp/iac-apply/resource-group-verification.json'))
@@ -286,6 +289,7 @@ jobs:
           assert identity['principalId'] == outputs['identity_principal_id']['value']
           print(json.dumps({
               'status': 'passed',
+              'service': 'managed-identity',
               'resourceGroup': rg['name'],
               'identity': identity['name'],
               'identityId': identity['id'],
@@ -294,6 +298,60 @@ jobs:
               'exactSavedPlanApplied': True
           }, indent=2))
           PY
+
+          elif [ "$SERVICE" = "network" ]; then
+            VNET="$(jq -r '.virtual_network_name' /tmp/iac-apply/request.tfvars.json)"
+            SUBNET="$(jq -r '.subnets | keys[0]' /tmp/iac-apply/request.tfvars.json)"
+
+            az network vnet show --resource-group "$RG" --name "$VNET" \
+              --query '{id:id,name:name,location:location,addressSpace:addressSpace.addressPrefixes,tags:tags,peerings:virtualNetworkPeerings}' \
+              -o json > /tmp/iac-apply/network-verification.json
+
+            az network vnet subnet show --resource-group "$RG" --vnet-name "$VNET" --name "$SUBNET" \
+              --query '{id:id,name:name,addressPrefixes:addressPrefixes,natGateway:natGateway,networkSecurityGroup:networkSecurityGroup,routeTable:routeTable,serviceEndpoints:serviceEndpoints}' \
+              -o json > /tmp/iac-apply/subnet-verification.json
+
+            python - <<'PY' | tee /tmp/iac-apply/verification-summary.json
+          import json
+          tfvars = json.load(open('/tmp/iac-apply/request.tfvars.json'))
+          rg = json.load(open('/tmp/iac-apply/resource-group-verification.json'))
+          vnet = json.load(open('/tmp/iac-apply/network-verification.json'))
+          subnet = json.load(open('/tmp/iac-apply/subnet-verification.json'))
+          outputs = json.load(open('/tmp/iac-apply/terraform-outputs.json'))
+          subnet_name = next(iter(tfvars['subnets']))
+          assert rg['name'] == tfvars['resource_group_name']
+          assert vnet['name'] == tfvars['virtual_network_name']
+          assert vnet['id'] == outputs['virtual_network_id']['value']
+          assert sorted(vnet['addressSpace']) == sorted(tfvars['address_space'])
+          assert not (vnet.get('peerings') or [])
+          assert subnet['name'] == subnet_name
+          assert subnet['id'] == outputs['subnet_ids']['value'][subnet_name]
+          assert sorted(subnet['addressPrefixes']) == sorted(tfvars['subnets'][subnet_name]['address_prefixes'])
+          assert subnet.get('natGateway') is None
+          assert subnet.get('networkSecurityGroup') is None
+          assert subnet.get('routeTable') is None
+          assert not (subnet.get('serviceEndpoints') or [])
+          assert tfvars['nat_gateway'] is None
+          assert tfvars['network_security_groups'] == {}
+          assert tfvars['route_tables'] == {}
+          assert tfvars['private_dns_zone_names'] == []
+          print(json.dumps({
+              'status': 'passed',
+              'service': 'network',
+              'resourceGroup': rg['name'],
+              'virtualNetwork': vnet['name'],
+              'virtualNetworkId': vnet['id'],
+              'subnet': subnet['name'],
+              'subnetId': subnet['id'],
+              'paidNetworkAddOnsDetected': False,
+              'remoteState': True,
+              'exactSavedPlanApplied': True
+          }, indent=2))
+          PY
+          else
+            echo "Unsupported verification service: $SERVICE" >&2
+            exit 1
+          fi
 
       - name: Publish DEV IaC Apply evidence
         if: ${{ always() }}
