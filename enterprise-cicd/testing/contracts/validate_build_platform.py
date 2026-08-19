@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,6 +27,7 @@ def require_text(errors: list[str], text: str, token: str, message: str) -> None
 def main() -> int:
     errors: list[str] = []
     versions_path = ROOT / "build-images" / "versions.json"
+    digest_binding_path = ROOT / "build-images" / "digests" / "active.json"
     registry = load(versions_path)
     images = registry.get("images", {})
 
@@ -46,6 +48,32 @@ def main() -> int:
         if not dockerfile.is_file():
             fail(errors, f"build image Dockerfile does not exist: {dockerfile}")
 
+    if not digest_binding_path.is_file():
+        fail(errors, "active platform build-image digest binding is missing")
+        digest_binding = {}
+        bound_images = {}
+    else:
+        digest_binding = load(digest_binding_path)
+        if digest_binding.get("apiVersion") != "platform.ci/v1" or digest_binding.get("kind") != "BuildImageDigestBinding":
+            fail(errors, "invalid active build-image digest binding envelope")
+        binding_spec = digest_binding.get("spec") or {}
+        bound_images = binding_spec.get("images") or {}
+        if not binding_spec.get("acrName"):
+            fail(errors, "active build-image digest binding must declare acrName")
+        if binding_spec.get("promotionByDigest") is not True:
+            fail(errors, "platform build-image promotion must remain digest-based")
+        if binding_spec.get("mutableTagExecutionAllowed") is not False:
+            fail(errors, "platform build execution must never follow mutable tags")
+        if set(bound_images) != set(images):
+            fail(
+                errors,
+                "active build-image digest binding must cover the exact registered image set: "
+                f"missing={sorted(set(images) - set(bound_images))} unexpected={sorted(set(bound_images) - set(images))}",
+            )
+        for name, digest in bound_images.items():
+            if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                fail(errors, f"invalid active digest binding for {name}: {digest!r}")
+
     mandatory_controls = {"unit-test", "secret-scan", "sca", "sast", "sbom", "container-scan", "sign", "provenance"}
     profile_root = ROOT / "ci-catalog"
     profiles = list(profile_root.glob("*/*/profile.json"))
@@ -58,6 +86,8 @@ def main() -> int:
         image = spec.get("buildImage")
         if image not in images:
             fail(errors, f"profile references unregistered build image: {profile_path}: {image}")
+        if image not in bound_images:
+            fail(errors, f"profile build image has no active immutable digest binding: {profile_path}: {image}")
         commands = spec.get("commands", {})
         for phase in ("prepare", "verify", "package"):
             if not commands.get(phase):
@@ -98,12 +128,15 @@ def main() -> int:
         require_text(errors, resolver_text, required, f"application resolver missing source-boundary control: {required}")
     for required in (
         "image_metadata",
+        "activeDigest",
+        "buildImageDigest",
+        'ROOT / "build-images" / "digests" / "active.json"',
         "json.dumps(profile, sort_keys=True",
         "json.dumps(image_metadata, sort_keys=True",
-        'cacheRestorePrefix',
+        "cacheRestorePrefix",
         'cache_prefix = f"platform-ci-{safe_name(profile_name)}-"',
     ):
-        require_text(errors, prepare_text, required, f"build cache helper missing toolchain/profile isolation control: {required}")
+        require_text(errors, prepare_text, required, f"build cache helper missing toolchain/digest/profile isolation control: {required}")
 
     smoke_application = ROOT / "application-definitions" / "platform-smoke-api.json"
     if smoke_application.is_file():
@@ -164,6 +197,13 @@ def main() -> int:
                     fail(errors, f"cache restore prefix is not build-profile scoped: {prepared.get('cacheRestorePrefix')}")
                 if not str(prepared.get("cacheKey", "")).startswith(prepared.get("cacheRestorePrefix", "__missing__")):
                     fail(errors, "exact cache key must be nested under its profile-scoped restore prefix")
+                expected_builder_digest = bound_images.get(resolved.get("buildImage"))
+                if prepared.get("buildImageDigest") != expected_builder_digest:
+                    fail(
+                        errors,
+                        "prepared build environment did not inherit the active immutable builder digest: "
+                        f"expected={expected_builder_digest} actual={prepared.get('buildImageDigest')}",
+                    )
             except subprocess.CalledProcessError as exc:
                 fail(errors, f"smoke application resolver/cache contract failed: stdout={exc.stdout} stderr={exc.stderr}")
 
@@ -184,7 +224,7 @@ def main() -> int:
             "image-scan": "needs: [resolve, image-build]",
             "sbom": "needs: [resolve, image-build]",
             "sign": "needs: [resolve, image-build, image-scan, sbom]",
-            "release-evidence": "needs: [resolve, image-build, image-scan, sbom, sign]",
+            "release-evidence": "needs: [resolve, build-test, image-build, image-scan, sbom, sign]",
         }
         for job, edge in required_edges.items():
             require_text(errors, reusable, edge, f"reusable CI missing governed needs edge for {job}: {edge}")
@@ -203,16 +243,20 @@ def main() -> int:
             "source_path: ${{ steps.resolve.outputs.source_path }}",
             "scan-ref: ${{ needs.resolve.outputs.source_path }}",
             "--workspace '${{ needs.resolve.outputs.source_path }}'",
+            "build_image_digest: ${{ steps.prepare.outputs.build_image_digest }}",
             "cache_restore_prefix=$(jq -r .cacheRestorePrefix",
             "${{ steps.prepare.outputs.cache_restore_prefix }}",
             '-v "$source_dir:/workspace"',
             'tar -C "$source_dir" -czf /tmp/build-workspace.tgz .',
             "mkdir -p /tmp/application-source",
-            '"$source_dir"',
+            'image="$LOGIN_SERVER/build/$image_name@$BUILD_IMAGE_DIGEST"',
+            'builder:{image:$buildImage,digest:$buildImageDigest}',
         ):
-            require_text(errors, reusable, required, f"reusable CI missing required supply-chain/source/cache control: {required}")
+            require_text(errors, reusable, required, f"reusable CI missing required supply-chain/source/cache/digest control: {required}")
         if "${{ runner.os }}-${{ runner.arch }}-platform-ci-\n" in reusable:
             fail(errors, "dependency cache restore fallback must not be global across build profiles")
+        if 'image="$LOGIN_SERVER/build/$BUILD_IMAGE"' in reusable:
+            fail(errors, "platform build execution must never pull a mutable build-image tag")
 
     if not matrix_path.is_file():
         fail(errors, "matrix reusable CI orchestrator is missing")
@@ -269,13 +313,15 @@ def main() -> int:
 
     print("BUILD PLATFORM VALIDATION: PASSED")
     print(f"registered images: {len(images)}")
+    print(f"active immutable build-image digests: {len(bound_images)}")
     print(f"validated profiles: {len(profiles)}")
     print("lifecycle: prepare -> verify -> package")
     print("orchestration: matrix outside; needs DAG inside reusable workflow")
     print("consumption: thin callers; platform workflow pinned by immutable release ref")
     print("security: source + container controls required before signing")
     print("monorepo: source scan/build/package/container context isolated by Application sourcePath")
-    print("cache: profile + toolchain metadata + lock inputs; fallback cannot cross build profiles")
+    print("builder: platform build images execute by committed sha256 digest; digest recorded in release evidence")
+    print("cache: profile + builder digest + toolchain metadata + lock inputs; fallback cannot cross build profiles")
     print("legacy arbitrary-command reusable entrypoint: fail-closed")
     return 0
 
