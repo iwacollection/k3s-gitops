@@ -62,10 +62,12 @@ ROLE_BODY="$(cat <<EOF
           "Microsoft.Resources/subscriptions/providers/read",
           "Microsoft.Resources/subscriptions/resourceGroups/read",
           "Microsoft.Network/locations/operations/read",
-          "Microsoft.Network/usages/read",
+          "Microsoft.Network/locations/operationResults/read",
+          "Microsoft.Network/locations/usages/read",
           "Microsoft.Network/virtualNetworks/read",
           "Microsoft.Network/virtualNetworks/write",
           "Microsoft.Network/virtualNetworks/delete",
+          "Microsoft.Network/virtualNetworks/usages/read",
           "Microsoft.Network/virtualNetworks/subnets/read",
           "Microsoft.Network/virtualNetworks/subnets/write",
           "Microsoft.Network/virtualNetworks/subnets/delete",
@@ -88,6 +90,8 @@ import sys
 body = json.loads(sys.argv[1])
 actions = set(body['properties']['permissions'][0]['actions'])
 required = {
+    'Microsoft.Network/locations/operations/read',
+    'Microsoft.Network/locations/operationResults/read',
     'Microsoft.Network/virtualNetworks/read',
     'Microsoft.Network/virtualNetworks/write',
     'Microsoft.Network/virtualNetworks/delete',
@@ -98,6 +102,12 @@ required = {
 missing = required - actions
 if missing:
     raise SystemExit(f'missing required network actions: {sorted(missing)}')
+invalid_legacy = {
+    'Microsoft.Network/usages/read',
+}
+found_invalid = invalid_legacy & actions
+if found_invalid:
+    raise SystemExit(f'invalid Azure Network operation name(s): {sorted(found_invalid)}')
 forbidden_fragments = (
     'Microsoft.Network/*',
     'publicIPAddresses',
@@ -170,8 +180,11 @@ import json
 import sys
 role = json.load(open(sys.argv[1]))
 actions = set(role['properties']['permissions'][0]['actions'])
+assert 'Microsoft.Network/locations/operations/read' in actions
+assert 'Microsoft.Network/locations/operationResults/read' in actions
 assert 'Microsoft.Network/virtualNetworks/write' in actions
 assert 'Microsoft.Network/virtualNetworks/subnets/write' in actions
+assert 'Microsoft.Network/usages/read' not in actions
 assert 'Microsoft.Network/*' not in actions
 for forbidden in ('publicIPAddresses', 'natGateways', 'virtualNetworkPeerings', 'vpnGateways', 'virtualNetworkGateways', 'applicationGateways', 'privateDnsZones'):
     assert not any(forbidden in action for action in actions), forbidden
