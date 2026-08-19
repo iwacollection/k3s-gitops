@@ -11,9 +11,37 @@ REQUEST_ROOT = REPO / "enterprise-cicd" / "iac-requests" / "dev"
 TOMBSTONE_ROOT = REPO / "enterprise-cicd" / "iac-decommission" / "dev"
 RENDERER = REPO / "enterprise-cicd" / "iac-catalog" / "render_request.py"
 
+NON_OWNING_SERVICES = {"iam-role-binding"}
+
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def validate_non_owning_request(*, relative: str, service: str, tfvars: dict) -> None:
+    if service != "iam-role-binding":
+        fail(f"unsupported non-owning Catalog service: {service} ({relative})")
+
+    assignments = tfvars.get("assignments") or {}
+    if not assignments:
+        fail(f"IAM request rendered no assignments: {relative}")
+
+    for name, assignment in assignments.items():
+        scope = str((assignment or {}).get("scope") or "")
+        principal_type = str((assignment or {}).get("principal_type") or "")
+        if not scope:
+            fail(f"IAM assignment has no scope: {relative} assignment={name}")
+        normalized = scope.rstrip("/").lower()
+        if normalized.count("/") <= 2 or "/resourcegroups/" not in normalized:
+            fail(
+                "IAM Catalog v1 may reference an existing resource-group/resource scope, "
+                f"but subscription-root scope is forbidden: {relative} scope={scope}"
+            )
+        if principal_type != "ServicePrincipal":
+            fail(
+                f"IAM Catalog v1 must remain ServicePrincipal-only: {relative} "
+                f"assignment={name} principalType={principal_type}"
+            )
 
 
 def main() -> None:
@@ -27,6 +55,7 @@ def main() -> None:
 
     ownership: dict[str, list[dict[str, str]]] = {}
     active_count = 0
+    non_owning_count = 0
 
     with tempfile.TemporaryDirectory(prefix="iac-ownership-") as tmp:
         tmpdir = Path(tmp)
@@ -43,6 +72,7 @@ def main() -> None:
             if spec.get("environment") != "dev":
                 fail(f"non-DEV request found in DEV ownership scope: {relative}")
 
+            service = str(spec.get("service") or "")
             output = tmpdir / f"{request_path.stem}.tfvars.json"
             subprocess.run(
                 [
@@ -59,6 +89,17 @@ def main() -> None:
                 text=True,
             )
             tfvars = json.loads(output.read_text(encoding="utf-8"))
+
+            if service in NON_OWNING_SERVICES:
+                validate_non_owning_request(
+                    relative=relative,
+                    service=service,
+                    tfvars=tfvars,
+                )
+                non_owning_count += 1
+                active_count += 1
+                continue
+
             resource_group = tfvars.get("resource_group_name")
             if not resource_group:
                 fail(f"request does not render a resource_group_name: {relative}")
@@ -66,12 +107,12 @@ def main() -> None:
             if tags.get("iac_request") != metadata.get("name"):
                 fail(f"request ownership tag mismatch: {relative}")
 
-            state_key = f"catalog/dev/{spec.get('service')}/{metadata.get('name')}.tfstate"
+            state_key = f"catalog/dev/{service}/{metadata.get('name')}.tfstate"
             ownership.setdefault(resource_group.lower(), []).append(
                 {
                     "request": relative,
                     "requestName": str(metadata.get("name")),
-                    "service": str(spec.get("service")),
+                    "service": service,
                     "stateKey": state_key,
                 }
             )
@@ -91,7 +132,8 @@ def main() -> None:
 
     print(
         f"IaC request ownership contract valid: active_requests={active_count}, "
-        f"exclusive_resource_groups={len(ownership)}, collisions=0."
+        f"exclusive_resource_groups={len(ownership)}, non_owning_requests={non_owning_count}, "
+        "collisions=0."
     )
 
 

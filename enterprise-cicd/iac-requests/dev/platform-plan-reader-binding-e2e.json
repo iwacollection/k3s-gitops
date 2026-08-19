@@ -1,0 +1,21 @@
+{
+  "apiVersion": "platform.iac/v1",
+  "kind": "InfrastructureRequest",
+  "metadata": {
+    "name": "platform-plan-reader-binding-e2e",
+    "owner": "platform-sre",
+    "application": "iac-v1-e2e"
+  },
+  "spec": {
+    "environment": "dev",
+    "region": "eastus",
+    "service": "iam-role-binding",
+    "templateVersion": "v1",
+    "parameters": {
+      "principalId": "07eecd2b-7069-4e9a-9731-2e0875834295",
+      "principalType": "ServicePrincipal",
+      "roleName": "Reader",
+      "scopeResourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/rg-platform-cicd"
+    }
+  }
+}
