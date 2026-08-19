@@ -7,8 +7,10 @@ on:
       - 'enterprise-cicd/promotion/**'
       - 'enterprise-cicd/release-requests/**'
       - 'enterprise-cicd/release-catalog/**'
+      - 'enterprise-cicd/activation/test/**'
       - 'enterprise-cicd/testing/contracts/validate_gitops_platform.py'
       - '.github/workflows/gitops-promotion.yml'
+      - '.github/workflows/platform-smoke-test-observe.yml'
       - '.github/workflows/gitops-platform-validate.yml'
   push:
     branches:
@@ -17,7 +19,9 @@ on:
       - 'enterprise-cicd/gitops/**'
       - 'enterprise-cicd/promotion/**'
       - 'enterprise-cicd/release-requests/**'
+      - 'enterprise-cicd/activation/test/**'
       - '.github/workflows/gitops-promotion.yml'
+      - '.github/workflows/platform-smoke-test-observe.yml'
 
 permissions:
   contents: read
@@ -36,8 +40,30 @@ jobs:
       - name: Compile promotion helpers
         run: python -m py_compile enterprise-cicd/promotion/render_gitops_overlay.py enterprise-cicd/release-catalog/render_release.py
 
-      - name: Validate guarded Flux bootstrap syntax
-        run: bash -n enterprise-cicd/gitops/clusters/aks-automatic-lab/bootstrap-flux-aks.sh
+      - name: Validate guarded Flux and TEST activation script syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n enterprise-cicd/gitops/clusters/aks-automatic-lab/bootstrap-flux-aks.sh
+          bash -n enterprise-cicd/gitops/clusters/aks-automatic-lab-test/bootstrap-flux-aks-test.sh
+          bash -n enterprise-cicd/activation/test/bootstrap-test-identity.sh
+
+      - name: Validate TEST observer least-privilege guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/platform-smoke-test-observe.yml
+          grep -F 'environment: test' "$workflow"
+          grep -F '.environments.test.identities.githubOidc.clientId' "$workflow"
+          grep -F 'test "$PRINCIPAL_ID" != "$DEV_PRINCIPAL"' "$workflow"
+          grep -F 'test "$(kubectl auth can-i create deployments.apps --namespace cicd-test)" = no' "$workflow"
+          grep -F 'test "$(kubectl auth can-i patch deployments.apps --namespace cicd-test)" = no' "$workflow"
+          grep -F 'test "$(kubectl auth can-i delete deployments.apps --namespace cicd-test)" = no' "$workflow"
+          grep -F 'test "$DIGEST" = "$(jq -r .spec.artifactDigest "$DEV_REQUEST")"' "$workflow"
+          if grep -nE 'kubectl[[:space:]]+(apply|create|patch|delete)|helm[[:space:]]+(upgrade|install)' "$workflow"; then
+            echo 'TEST observer must remain read-only.' >&2
+            exit 1
+          fi
 
       - name: Render governed DEV promotion fixture
         shell: bash
