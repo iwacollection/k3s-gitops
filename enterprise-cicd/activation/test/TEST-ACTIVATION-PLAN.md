@@ -5,7 +5,7 @@
 Real TEST readiness inventory has completed against the Azure lab.
 
 - Readiness workflow: `Azure TEST Readiness Inventory`
-- Evidence run: `32208945916`
+- Evidence run: `32209570526` validates the upgraded dual-identity readiness behavior while TEST remains unactivated
 - Physical AKS: existing `group-test / k8s-test-cicd`
 - ACR artifact: available
 - DEV inventory identity cluster-scope namespace visibility: denied as expected
@@ -13,12 +13,14 @@ Real TEST readiness inventory has completed against the Azure lab.
 - TEST namespace manifest: `cicd-test` exists in Git
 - TEST physical AKS/VNet creation: not required by Lab contract
 
-Current blockers are exactly:
+Current Azure/runtime blockers are exactly:
 
 ```text
 missing-test-github-oidc-binding
 missing-test-flux-configuration
 ```
+
+Before Azure federation is created, the GitHub `test` Environment trust boundary must also be explicitly configured. Implicit creation of an unprotected Environment is not accepted by this platform contract.
 
 ## Artifact invariant
 
@@ -43,6 +45,31 @@ OIDC subject:         repo:iwacollection/k3s-gitops:environment:test
 ```
 
 The shared Lab cluster does not mean shared deployment identity. DEV and TEST must remain separate principals and separate namespace RBAC boundaries.
+
+## Phase 0 — create and protect the GitHub TEST Environment
+
+The repository policy is stored at:
+
+```text
+enterprise-cicd/activation/test/github-environment-policy.json
+```
+
+Before creating the Azure federated credential, GitHub repository Settings must contain an Environment named exactly:
+
+```text
+test
+```
+
+During the current Draft activation stage, its deployment branch policy must be **Selected branches and tags** and allow only:
+
+```text
+design/azure-enterprise-control-plane-v1
+main
+```
+
+Do not store Azure client secrets in the Environment. The Environment exists as an OIDC trust/protection boundary.
+
+After PR #5 is eventually merged and the design branch is retired, remove the design branch from the Environment policy and retain trusted protected release branches only.
 
 ## Phase A — activate dedicated TEST OIDC identity
 
@@ -94,12 +121,12 @@ Do not invent IDs and do not copy DEV's principal into TEST.
 
 After the Binding is committed, rerun `Azure TEST Readiness Inventory`.
 
-The readiness workflow must launch a separate `environment:test` identity probe and prove:
+The readiness workflow launches a separate `environment:test` identity probe and must prove:
 
 ```text
 TEST OIDC login                          = success
-TEST principal != DEV principal          = true
-get Deployment in cicd-test              = yes
+TEST principal != DEV principal         = true
+get Deployment in cicd-test             = yes
 get EndpointSlice in cicd-test           = yes
 create Deployment in cicd-test           = no
 patch Deployment in cicd-test            = no
@@ -110,11 +137,11 @@ approved ACR digest readable              = true
 Expected state after Phase A:
 
 ```text
-testGithubOidcBinding       = true
+testGithubOidcBinding          = true
 testOidcAndNamespaceRbacProbe = true
-artifactAvailable           = true
+artifactAvailable              = true
 devInventoryIdentityClusterScopeVisible = false
-blocker remaining           = missing-test-flux-configuration
+blocker remaining              = missing-test-flux-configuration
 ```
 
 If the TEST identity is configured but the real OIDC/RBAC probe fails, activation must stop before writing Flux state.
@@ -170,7 +197,7 @@ artifactDigest: sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198
 releaseProfile: rolling/rolling-v1
 ```
 
-The generic GitOps Promotion workflow must then:
+The generic GitOps Promotion workflow then performs:
 
 ```text
 Release Request
@@ -186,7 +213,7 @@ No CI rebuild occurs in this phase.
 
 ## Phase D — TEST verification
 
-`Platform Smoke TEST Observe` must authenticate only through `environment:test` and verify:
+`Platform Smoke TEST Observe` authenticates only through `environment:test` and verifies:
 
 1. TEST principal differs from DEV principal.
 2. Flux `enterprise-cicd-test` is compliant.
@@ -201,4 +228,4 @@ Successful verification becomes the evidence required for the later TEST -> PROD
 
 ## Safety boundary
 
-Until Phase A and Phase B are explicitly run with `--apply`, this TEST activation package performs no Azure mutation.
+Until Phase 0 is configured and Phase A / Phase B are explicitly run with `--apply`, this TEST activation package performs no Azure mutation.
