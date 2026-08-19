@@ -5,10 +5,13 @@ on:
     paths:
       - 'enterprise-cicd/contracts/**'
       - 'enterprise-cicd/terraform/state/**'
+      - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
+      - '.github/workflows/iac-dev-drift-detect.yml'
       - '.github/workflows/control-contract-validate.yml'
   push:
     branches:
@@ -16,10 +19,14 @@ on:
     paths:
       - 'enterprise-cicd/contracts/**'
       - 'enterprise-cicd/terraform/state/**'
+      - 'enterprise-cicd/terraform/stacks/**/versions.tf'
       - 'enterprise-cicd/activation/iac/**'
       - 'enterprise-cicd/testing/contracts/validate_iac_control_plane.py'
+      - 'enterprise-cicd/testing/contracts/validate_iac_provider_pins.py'
       - '.github/workflows/iac-request-dev-plan.yml'
       - '.github/workflows/iac-request-dev-apply.yml'
+      - '.github/workflows/iac-dev-drift-detect.yml'
+      - '.github/workflows/control-contract-validate.yml'
 
 permissions:
   contents: read
@@ -42,6 +49,9 @@ jobs:
 
       - name: Validate IaC control-plane security boundaries
         run: python enterprise-cicd/testing/contracts/validate_iac_control_plane.py
+
+      - name: Validate IaC provider pins
+        run: python enterprise-cicd/testing/contracts/validate_iac_provider_pins.py
 
       - name: Test platform backend rendering
         env:
