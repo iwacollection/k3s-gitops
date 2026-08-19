@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "state": {
     "resourceGroup": "rg-platform-cicd",
     "storageAccount": "sttfstatec12c3a3699d8",
@@ -38,13 +38,62 @@
         "stateScope": "container",
         "genericContributor": false,
         "roleAssignmentWrite": false
+      },
+      "edge": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-dev-edge-apply",
+        "identityName": "k3s-gitops-iac-edge-apply-dev-uami",
+        "stateDataRole": "Storage Blob Data Contributor",
+        "stateScope": "container",
+        "genericNetworkContributor": false,
+        "peeringWrite": false,
+        "natGatewayWrite": false,
+        "applicationGatewayWrite": false,
+        "vpnConnectionWrite": false,
+        "roleAssignmentWrite": false
+      },
+      "iam": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-dev-iam-apply",
+        "identityName": "k3s-gitops-iac-iam-apply-dev-uami",
+        "delegation": "conditioned-rbac-administrator",
+        "allowedPrincipalType": "ServicePrincipal",
+        "allowedRoles": [
+          "Reader",
+          "AcrPull",
+          "Storage Blob Data Reader",
+          "Key Vault Secrets User"
+        ],
+        "subscriptionRootTargetAllowedByRenderer": false,
+        "ownerAllowed": false,
+        "contributorAllowed": false,
+        "userAccessAdministratorAllowed": false,
+        "arbitraryRoleAssignmentAllowed": false,
+        "stateDataRole": "Storage Blob Data Contributor",
+        "stateScope": "container"
       }
     },
     "test": {
-      "activationStatus": "not-started"
+      "activationStatus": "not-started",
+      "edge": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-test-edge-apply"
+      },
+      "iam": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-test-iam-apply"
+      }
     },
     "prod": {
-      "activationStatus": "not-started"
+      "activationStatus": "not-started",
+      "edge": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-prod-edge-apply"
+      },
+      "iam": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-prod-iam-apply"
+      }
     }
   }
 }
