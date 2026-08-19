@@ -8,7 +8,12 @@ on:
       - '.github/workflows/reusable-application-ci-v2.yml'
       - 'enterprise-cicd/application-definitions/platform-smoke-api.json'
       - 'enterprise-cicd/application-definitions/application.schema.json'
+      - 'enterprise-cicd/ci-catalog/**'
       - 'enterprise-cicd/ci-scripts/common/resolve_application.py'
+      - 'enterprise-cicd/ci-scripts/common/prepare_build_env.py'
+      - 'enterprise-cicd/build-images/digests/active.json'
+      - 'enterprise-cicd/build-images/versions.json'
+      - 'enterprise-cicd/dependency-proxy/**'
       - 'enterprise-cicd/testing/e2e/platform-smoke-api/**'
 
 permissions:
