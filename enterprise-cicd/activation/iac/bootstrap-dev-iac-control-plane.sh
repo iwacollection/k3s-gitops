@@ -6,6 +6,10 @@ set -euo pipefail
 #
 # This script intentionally does NOT elevate the existing application/CI OIDC identity.
 # It creates separate GitHub OIDC identities for IaC Plan and IaC Apply.
+#
+# The azurerm backend uses Azure Blob native state locking. Therefore the Plan
+# identity needs container-scoped Storage Blob Data Contributor for state/lease
+# operations, while remaining Azure-resource read-only at the management plane.
 
 APPLY=0
 if [[ "${1:-}" == "--apply" ]]; then
@@ -37,11 +41,10 @@ CUSTOM_APPLY_ROLE_NAME="Enterprise IaC Managed Identity DEV Apply"
 CUSTOM_APPLY_ROLE_ID="5ac62889-bba2-5e30-a0cf-a63ec3ce6fc3"
 
 READER_ROLE_ID="acdd72a7-3385-48ef-bd42-f606fba81ae7"
-STORAGE_BLOB_DATA_READER_ROLE_ID="2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"
 STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE_ID="ba92f5b4-2d11-453d-a403-e96b0029c9fe"
 
 PLAN_READER_ASSIGNMENT_ID="41d1d533-cced-5c75-bd36-e342b9a66836"
-PLAN_STATE_ASSIGNMENT_ID="0a177dd8-2db0-58c7-a3df-17a93d99118b"
+PLAN_STATE_ASSIGNMENT_ID="645715ac-50ed-48f4-a4d6-2e03ae6ba8f9"
 APPLY_CUSTOM_ASSIGNMENT_ID="79e8566c-26fb-519e-8d33-36ff801af1ca"
 APPLY_STATE_ASSIGNMENT_ID="936f24cd-2d9d-5eab-8485-a70a75b57905"
 
@@ -133,7 +136,7 @@ identity_field() {
   az rest \
     --method get \
     --url "$(arm_url "${STATE_RG_SCOPE}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${identity_name}?api-version=2023-01-31")" \
-    --query "$field" -o tsv
+    --query "properties.${field}" -o tsv
 }
 
 require_cmd az
@@ -162,9 +165,9 @@ if [[ "$APPLY" -eq 0 ]]; then
   printf '  3. Create private blob container %s\n' "$STATE_CONTAINER"
   printf '  4. Create UAMI %s + FIC subject environment:%s\n' "$PLAN_IDENTITY_NAME" "$PLAN_GITHUB_ENVIRONMENT"
   printf '  5. Create UAMI %s + FIC subject environment:%s\n' "$APPLY_IDENTITY_NAME" "$APPLY_GITHUB_ENVIRONMENT"
-  printf '  6. Plan UAMI: subscription Reader + tfstate container Storage Blob Data Reader\n'
+  printf '  6. Plan UAMI: subscription Reader + tfstate container Storage Blob Data Contributor (backend state/lease only)\n'
   printf '  7. Apply UAMI: narrow custom managed-identity apply role + tfstate container Storage Blob Data Contributor\n'
-  printf '\nNo Contributor/Owner role is assigned to either GitHub IaC identity.\n'
+  printf '\nNo Contributor/Owner Azure resource role is assigned to either GitHub IaC identity.\n'
   printf 'Run with mutations enabled:\n  %s --apply\n' "$0"
   exit 0
 fi
@@ -287,9 +290,9 @@ EOF
 )"
 put_json "${SUB_SCOPE}/providers/Microsoft.Authorization/roleDefinitions/${CUSTOM_APPLY_ROLE_ID}" "2022-04-01" "$CUSTOM_ROLE_BODY"
 
-log "Assigning Plan identity: subscription Reader + state container read-only"
+log "Assigning Plan identity: subscription Reader + state container backend contributor"
 ensure_role_assignment "$SUB_SCOPE" "$PLAN_READER_ASSIGNMENT_ID" "$PLAN_PRINCIPAL_ID" "${SUB_SCOPE}/providers/Microsoft.Authorization/roleDefinitions/${READER_ROLE_ID}"
-ensure_role_assignment "$STATE_CONTAINER_SCOPE" "$PLAN_STATE_ASSIGNMENT_ID" "$PLAN_PRINCIPAL_ID" "${SUB_SCOPE}/providers/Microsoft.Authorization/roleDefinitions/${STORAGE_BLOB_DATA_READER_ROLE_ID}"
+ensure_role_assignment "$STATE_CONTAINER_SCOPE" "$PLAN_STATE_ASSIGNMENT_ID" "$PLAN_PRINCIPAL_ID" "${SUB_SCOPE}/providers/Microsoft.Authorization/roleDefinitions/${STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE_ID}"
 
 log "Assigning Apply identity: narrow resource role + state container contributor"
 ensure_role_assignment "$SUB_SCOPE" "$APPLY_CUSTOM_ASSIGNMENT_ID" "$APPLY_PRINCIPAL_ID" "$CUSTOM_APPLY_ROLE_DEFINITION_ID"
@@ -317,7 +320,10 @@ cat > "$RESULT_FILE" <<EOF
     "principalId": "${PLAN_PRINCIPAL_ID}",
     "resourceId": "${STATE_RG_SCOPE}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${PLAN_IDENTITY_NAME}",
     "federatedCredential": "${PLAN_FIC_NAME}",
-    "subject": "repo:${REPOSITORY}:environment:${PLAN_GITHUB_ENVIRONMENT}"
+    "subject": "repo:${REPOSITORY}:environment:${PLAN_GITHUB_ENVIRONMENT}",
+    "stateDataRole": "Storage Blob Data Contributor",
+    "stateScope": "container",
+    "resourceWriteAccess": false
   },
   "apply": {
     "githubEnvironment": "${APPLY_GITHUB_ENVIRONMENT}",
@@ -326,7 +332,9 @@ cat > "$RESULT_FILE" <<EOF
     "principalId": "${APPLY_PRINCIPAL_ID}",
     "resourceId": "${STATE_RG_SCOPE}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${APPLY_IDENTITY_NAME}",
     "federatedCredential": "${APPLY_FIC_NAME}",
-    "subject": "repo:${REPOSITORY}:environment:${APPLY_GITHUB_ENVIRONMENT}"
+    "subject": "repo:${REPOSITORY}:environment:${APPLY_GITHUB_ENVIRONMENT}",
+    "stateDataRole": "Storage Blob Data Contributor",
+    "stateScope": "container"
   },
   "applyRole": {
     "name": "${CUSTOM_APPLY_ROLE_NAME}",
@@ -341,4 +349,4 @@ python3 -m json.tool "$RESULT_FILE" >/dev/null
 cat "$RESULT_FILE"
 
 log "Bootstrap complete"
-log "Next: bind the returned Plan/Apply IDs in environment-bindings.json, then run the GitHub remote-state Plan gate."
+log "Next: bind the returned Plan/Apply IDs in iac-runtime-bindings.json, then run the GitHub remote-state Plan gate."
