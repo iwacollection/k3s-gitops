@@ -49,14 +49,16 @@ def main() -> None:
             fail(f"{relative}: AzureRM provider source is missing or changed")
 
         expected = f'version = "{EXPECTED_AZURERM}"'
-        if expected not in text:
+        provider_version_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith('version =')
+        ]
+        if provider_version_lines != [expected]:
             fail(
-                f"{relative}: AzureRM version must be pinned to "
-                f"{EXPECTED_AZURERM!r}"
+                f"{relative}: AzureRM provider version must be exactly "
+                f"{EXPECTED_AZURERM!r}; found={provider_version_lines}"
             )
-
-        if text.count('version = "') != 1:
-            fail(f"{relative}: expected exactly one provider version constraint")
 
     print(
         f"IaC provider pin contract valid: {len(EXPECTED_VERSION_FILES)} root stacks, "
