@@ -56,14 +56,20 @@ The script creates/reuses only:
 
 1. `k3s-gitops-test-uami` in `sub-test`.
 2. GitHub federated credential for `environment:test`.
-3. `Reader` on resource group `group-test`.
+3. `Reader` only on AKS `k8s-test-cicd`, covering the AKS resource and its Flux child resources without granting resource-group-wide read access.
 4. `Azure Kubernetes Service Cluster User Role` on AKS `k8s-test-cicd`.
 5. `Azure Kubernetes Service RBAC Reader` scoped only to `cicd-test`.
 6. `AcrPull` on `acrcicdc12c3a3699d8`.
 
-It must not grant `Owner`, `Contributor`, `User Access Administrator`, AKS RBAC Writer/Admin or `AcrPush` to the TEST runtime identity.
+It must not grant resource-group-wide Reader, `Owner`, `Contributor`, `User Access Administrator`, AKS RBAC Writer/Admin or `AcrPush` to the TEST runtime identity.
 
-The command returns the real:
+The command creates one structured non-secret result file:
+
+```text
+test-identity-activation-result.json
+```
+
+It contains the real:
 
 ```text
 clientId
@@ -71,6 +77,8 @@ principalId
 tenantId
 subscriptionId
 resourceId
+federatedSubject
+roleAssignments
 ```
 
 These IDs must then be committed into:
@@ -82,20 +90,34 @@ enterprise-cicd/contracts/environment-bindings.json
 
 Do not invent IDs and do not copy DEV's principal into TEST.
 
-## Gate A — rerun TEST readiness
+## Gate A — prove TEST identity, not just its configuration
 
 After the Binding is committed, rerun `Azure TEST Readiness Inventory`.
+
+The readiness workflow must launch a separate `environment:test` identity probe and prove:
+
+```text
+TEST OIDC login                          = success
+TEST principal != DEV principal          = true
+get Deployment in cicd-test              = yes
+get EndpointSlice in cicd-test           = yes
+create Deployment in cicd-test           = no
+patch Deployment in cicd-test            = no
+delete Deployment in cicd-test           = no
+approved ACR digest readable              = true
+```
 
 Expected state after Phase A:
 
 ```text
-testGithubOidcBinding = true
-artifactAvailable      = true
-devIdentityClusterScopeVisible = false
-blocker remaining      = missing-test-flux-configuration
+testGithubOidcBinding       = true
+testOidcAndNamespaceRbacProbe = true
+artifactAvailable           = true
+devInventoryIdentityClusterScopeVisible = false
+blocker remaining           = missing-test-flux-configuration
 ```
 
-If any other blocker appears, stop activation and investigate before writing Flux state.
+If the TEST identity is configured but the real OIDC/RBAC probe fails, activation must stop before writing Flux state.
 
 ## Phase B — activate TEST Flux configuration
 
@@ -128,6 +150,7 @@ Expected result:
 status = ready
 blockers = []
 testGithubOidcBinding = true
+testOidcAndNamespaceRbacProbe = true
 testFluxConfiguration = true
 testFluxBranchMatch = true
 artifactAvailable = true
@@ -163,15 +186,16 @@ No CI rebuild occurs in this phase.
 
 ## Phase D — TEST verification
 
-The TEST observation workflow must authenticate only through `environment:test` and verify:
+`Platform Smoke TEST Observe` must authenticate only through `environment:test` and verify:
 
-1. Flux `enterprise-cicd-test` is compliant.
-2. Flux source commit contains the merged `gitops/test` commit.
-3. Deployment is in `cicd-test`.
-4. Deployed image exactly equals the DEV-approved digest.
-5. Available replicas equal desired replicas.
-6. At least one ready EndpointSlice endpoint exists.
-7. TEST identity cannot mutate Kubernetes resources.
+1. TEST principal differs from DEV principal.
+2. Flux `enterprise-cicd-test` is compliant.
+3. Flux source commit contains the merged `gitops/test` commit.
+4. Deployment is in `cicd-test`.
+5. Deployed image exactly equals the DEV-approved digest.
+6. Desired, available and ready replicas converge.
+7. At least one ready EndpointSlice endpoint exists.
+8. TEST identity cannot create, patch or delete Deployments.
 
 Successful verification becomes the evidence required for the later TEST -> PROD promotion.
 
