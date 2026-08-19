@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import re
 from pathlib import Path
@@ -179,6 +180,23 @@ def network_binding(request: dict[str, Any], service: str, delegated: bool = Fal
     return result
 
 
+def parse_private_ipv4_cidr(name: str, value: str) -> ipaddress.IPv4Network:
+    try:
+        network = ipaddress.ip_network(value, strict=True)
+    except ValueError as exc:
+        fail(f"{name}: invalid CIDR: {exc}")
+    if not isinstance(network, ipaddress.IPv4Network):
+        fail(f"{name}: only IPv4 is supported in network/v1")
+    private_ranges = (
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+    )
+    if not any(network.subnet_of(parent) for parent in private_ranges):
+        fail(f"{name}: network/v1 only allows RFC1918 private address space")
+    return network
+
+
 def acr_tfvars(request: dict[str, Any], parameters: dict[str, Any], name_prefix: str) -> dict[str, Any]:
     result = common(request)
     app = compact(request["metadata"]["application"])
@@ -232,6 +250,34 @@ def managed_identity_tfvars(request: dict[str, Any], parameters: dict[str, Any])
     env = request["spec"]["environment"]
     result["identity_name"] = f"id-{app}-{env}-{suffix(request)}"[:128].rstrip("-")
     result["tags"] = {**result["tags"], "identity_purpose": parameters["purpose"]}
+    return result
+
+
+def network_tfvars(request: dict[str, Any], parameters: dict[str, Any]) -> dict[str, Any]:
+    vnet = parse_private_ipv4_cidr("addressSpace", parameters["addressSpace"])
+    subnet = parse_private_ipv4_cidr("subnetPrefix", parameters["subnetPrefix"])
+    if not subnet.subnet_of(vnet) or subnet.prefixlen <= vnet.prefixlen:
+        fail("subnetPrefix: must be a proper subnet of addressSpace")
+
+    result = common(request)
+    app = slug(request["metadata"]["application"])
+    env = request["spec"]["environment"]
+    subnet_name = slug(parameters["subnetName"])
+    result.update({
+        "virtual_network_name": f"vnet-{app}-{env}-{suffix(request)}"[:64].rstrip("-"),
+        "address_space": [str(vnet)],
+        "subnets": {
+            subnet_name: {
+                "address_prefixes": [str(subnet)],
+                "service_endpoints": [],
+            }
+        },
+        "network_security_groups": {},
+        "route_tables": {},
+        "nat_gateway": None,
+        "private_dns_zone_names": [],
+    })
+    result["tags"] = {**result["tags"], "network_cost_profile": "vnet-subnet-only"}
     return result
 
 
@@ -290,6 +336,7 @@ RENDERERS = {
     "storage": storage_tfvars,
     "key-vault": key_vault_tfvars,
     "managed-identity": managed_identity_tfvars,
+    "network": network_tfvars,
     "service-bus": service_bus_tfvars,
     "managed-redis": managed_redis_tfvars,
     "postgresql-flexible": postgresql_flexible_tfvars,

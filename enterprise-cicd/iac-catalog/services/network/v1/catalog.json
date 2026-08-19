@@ -1,0 +1,11 @@
+{
+  "service": "network",
+  "version": "v1",
+  "owner": "platform-sre",
+  "terraformModule": "enterprise-cicd/terraform/modules/network",
+  "rootStack": "enterprise-cicd/terraform/stacks/platform/connectivity",
+  "requestSchema": "request.schema.json",
+  "defaults": "defaults.json",
+  "policy": "policy.json",
+  "lifecycle": "active"
+}
