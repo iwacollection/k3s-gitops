@@ -20,11 +20,20 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "-", value).strip("-")
 
 
-def digest_inputs(profile_name: str, build_image: str, inputs: list[str], workspace: Path) -> str:
+def digest_inputs(
+    profile_name: str,
+    build_image: str,
+    profile: dict,
+    image_metadata: dict,
+    inputs: list[str],
+    workspace: Path,
+) -> str:
     h = hashlib.sha256()
     h.update(profile_name.encode())
     h.update(build_image.encode())
     h.update(platform.machine().encode())
+    h.update(json.dumps(profile, sort_keys=True, separators=(",", ":")).encode())
+    h.update(json.dumps(image_metadata, sort_keys=True, separators=(",", ":")).encode())
     for item in inputs:
         path = workspace / item
         h.update(item.encode())
@@ -56,7 +65,21 @@ def main() -> None:
     profile = load(profile_path)
     spec = profile["spec"]
 
-    cache_hash = digest_inputs(profile_name, spec["buildImage"], spec.get("cacheKeyInputs", []), workspace)
+    image_registry = load(ROOT / "build-images" / "versions.json")
+    build_image = spec["buildImage"]
+    image_metadata = (image_registry.get("images") or {}).get(build_image)
+    if image_metadata is None:
+        raise SystemExit(f"build profile references unregistered build image: {build_image}")
+
+    cache_hash = digest_inputs(
+        profile_name,
+        build_image,
+        profile,
+        image_metadata,
+        spec.get("cacheKeyInputs", []),
+        workspace,
+    )
+    cache_prefix = f"platform-ci-{safe_name(profile_name)}-"
     configured_cache_root = os.getenv("PLATFORM_CACHE_ROOT", "").strip()
     cache_root = Path(configured_cache_root).resolve() if configured_cache_root else workspace / ".platform-cache"
     cache_dir = cache_root / safe_name(profile_name)
@@ -99,7 +122,9 @@ def main() -> None:
 
     result = {
         "profile": profile_name,
-        "cacheKey": f"platform-ci-{safe_name(profile_name)}-{cache_hash}",
+        "buildImage": build_image,
+        "cacheKey": f"{cache_prefix}{cache_hash}",
+        "cacheRestorePrefix": cache_prefix,
         "cacheDir": cache_dir.as_posix(),
         "envFile": args.env_file.as_posix(),
         "configDir": args.config_dir.as_posix(),
