@@ -1,0 +1,395 @@
+name: IaC Protected Capability Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev, test, prod]
+      request_path:
+        description: Committed InfrastructureRequest path
+        required: true
+        type: string
+      confirm_billable:
+        description: Required for Load Balancer or VPN Gateway Apply
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      service: ${{ steps.resolve.outputs.service }}
+      capability: ${{ steps.resolve.outputs.capability }}
+      request_name: ${{ steps.resolve.outputs.request_name }}
+      stack: ${{ steps.resolve.outputs.stack }}
+      client_id: ${{ steps.resolve.outputs.client_id }}
+      tenant_id: ${{ steps.resolve.outputs.tenant_id }}
+      subscription_id: ${{ steps.resolve.outputs.subscription_id }}
+      github_environment: ${{ steps.resolve.outputs.github_environment }}
+      state_rg: ${{ steps.resolve.outputs.state_rg }}
+      state_storage: ${{ steps.resolve.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve request and fail-closed capability binding
+        id: resolve
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          REQUEST_PATH: ${{ inputs.request_path }}
+          CONFIRM_BILLABLE: ${{ inputs.confirm_billable }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+
+          env = os.environ['TARGET_ENV']
+          raw_path = os.environ['REQUEST_PATH'].strip()
+          confirm_billable = os.environ['CONFIRM_BILLABLE'].lower() == 'true'
+          if env not in {'dev', 'test', 'prod'}:
+              raise SystemExit(f'unsupported environment: {env}')
+          if not raw_path or raw_path.startswith('/') or '..' in PurePosixPath(raw_path).parts:
+              raise SystemExit('request_path must be a repository-relative safe path')
+          expected_prefix = f'enterprise-cicd/iac-requests/{env}/'
+          if not raw_path.startswith(expected_prefix) or not raw_path.endswith('.json') or raw_path.endswith('.example.json'):
+              raise SystemExit(f'request_path must be a committed {env} InfrastructureRequest JSON')
+
+          path = Path(raw_path)
+          if not path.is_file():
+              raise SystemExit(f'request does not exist at current ref: {raw_path}')
+          req = json.loads(path.read_text())
+          if req.get('apiVersion') != 'platform.iac/v1' or req.get('kind') != 'InfrastructureRequest':
+              raise SystemExit('invalid InfrastructureRequest envelope')
+          spec = req['spec']
+          meta = req['metadata']
+          if spec['environment'] != env:
+              raise SystemExit('request environment does not match workflow target')
+
+          service = spec['service']
+          if service in {'load-balancer', 'vpn-gateway'}:
+              capability = 'edge'
+              expected_apply_mode = 'protected-edge-oidc'
+              if not confirm_billable:
+                  raise SystemExit(f'{service} is billable; rerun with confirm_billable=true after reviewing the PR Plan')
+          elif service == 'iam-role-binding':
+              capability = 'iam'
+              expected_apply_mode = 'dedicated-iam-oidc'
+          else:
+              raise SystemExit(
+                  f'service={service} is not a protected capability service; '
+                  'standard services must use their standard Apply runtime'
+              )
+
+          version = spec['templateVersion']
+          catalog_path = Path(f'enterprise-cicd/iac-catalog/services/{service}/{version}/catalog.json')
+          catalog = json.loads(catalog_path.read_text())
+          if catalog.get('lifecycle') != 'active':
+              raise SystemExit(f'{service}/{version} catalog is not active')
+          if catalog.get('applyMode') != expected_apply_mode:
+              raise SystemExit(f'{service}/{version} applyMode changed unexpectedly')
+
+          binding = json.loads(Path('enterprise-cicd/contracts/iac-runtime-bindings.json').read_text())
+          plane = binding['environments'][env].get(capability) or {}
+          expected_github_env = f'iac-{env}-{capability}-apply'
+          if plane.get('activationStatus') != 'ready':
+              raise SystemExit(f'{env}/{capability} Apply capability is not activated: {plane.get("activationStatus")}')
+          if plane.get('githubEnvironment') != expected_github_env:
+              raise SystemExit(f'{env}/{capability} GitHub Environment binding mismatch')
+          if plane.get('stateDataRole') != 'Storage Blob Data Contributor' or plane.get('stateScope') != 'container':
+              raise SystemExit(f'{env}/{capability} state permission must remain container-scoped Blob Data Contributor')
+          client_id = plane.get('clientId')
+          if not client_id:
+              raise SystemExit(f'{env}/{capability} binding has no real clientId')
+
+          if capability == 'edge':
+              guards = {
+                  'genericNetworkContributor': False,
+                  'peeringWrite': False,
+                  'natGatewayWrite': False,
+                  'applicationGatewayWrite': False,
+                  'vpnConnectionWrite': False,
+                  'roleAssignmentWrite': False,
+              }
+              for key, expected in guards.items():
+                  if plane.get(key) is not expected:
+                      raise SystemExit(f'edge privilege guard failed: {key}={plane.get(key)!r}')
+          else:
+              if plane.get('delegation') != 'conditioned-rbac-administrator':
+                  raise SystemExit('IAM runtime must use conditioned RBAC Administrator delegation')
+              if plane.get('allowedPrincipalType') != 'ServicePrincipal':
+                  raise SystemExit('IAM runtime must remain ServicePrincipal-only')
+              expected_roles = {'Reader', 'AcrPull', 'Storage Blob Data Reader', 'Key Vault Secrets User'}
+              if set(plane.get('allowedRoles', [])) != expected_roles:
+                  raise SystemExit('IAM role allowlist changed')
+              for key in ('subscriptionRootTargetAllowedByRenderer', 'ownerAllowed', 'contributorAllowed', 'userAccessAdministratorAllowed', 'arbitraryRoleAssignmentAllowed'):
+                  if plane.get(key) is not False:
+                      raise SystemExit(f'IAM privilege guard failed: {key}')
+
+          azure = binding['azure']
+          state = binding['state']
+          if state.get('authentication') != 'MicrosoftEntraID' or state.get('sharedKeyAccess') is not False:
+              raise SystemExit('remote state must remain Entra-only with Shared Key disabled')
+
+          values = {
+              'environment': env,
+              'service': service,
+              'capability': capability,
+              'request_name': meta['name'],
+              'stack': catalog['rootStack'],
+              'client_id': client_id,
+              'tenant_id': azure['tenantId'],
+              'subscription_id': azure['subscriptionId'],
+              'github_environment': expected_github_env,
+              'state_rg': state['resourceGroup'],
+              'state_storage': state['storageAccount'],
+          }
+          for key, value in values.items():
+              print(f'{key}={value}')
+          PY
+
+  exact-plan-apply:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ${{ needs.resolve.outputs.github_environment }}
+    concurrency:
+      group: iac-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.capability }}-apply
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ needs.resolve.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.resolve.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.resolve.outputs.subscription_id }}
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+      TFSTATE_RESOURCE_GROUP: ${{ needs.resolve.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.resolve.outputs.state_storage }}
+      REQUEST_PATH: ${{ inputs.request_path }}
+      STACK: ${{ needs.resolve.outputs.stack }}
+      SERVICE: ${{ needs.resolve.outputs.service }}
+      TARGET_ENV: ${{ needs.resolve.outputs.environment }}
+      REQUEST_NAME: ${{ needs.resolve.outputs.request_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login using isolated capability OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.resolve.outputs.client_id }}
+          tenant-id: ${{ needs.resolve.outputs.tenant_id }}
+          subscription-id: ${{ needs.resolve.outputs.subscription_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Render governed request and Entra-only backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-protected-apply
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request "$REQUEST_PATH" \
+            --output /tmp/iac-protected-apply/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment "$TARGET_ENV" \
+            --service "$SERVICE" \
+            --request "$REQUEST_NAME" \
+            --auth oidc \
+            --output /tmp/iac-protected-apply/backend.hcl
+
+      - name: Merge-time exact re-plan with native state lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init \
+            -reconfigure \
+            -input=false \
+            -backend-config=/tmp/iac-protected-apply/backend.hcl
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" plan \
+            -lock=true \
+            -lock-timeout=5m \
+            -input=false \
+            -var-file=/tmp/iac-protected-apply/request.tfvars.json \
+            -out=/tmp/iac-protected-apply/apply.tfplan
+          terraform -chdir="$STACK" show -json /tmp/iac-protected-apply/apply.tfplan \
+            > /tmp/iac-protected-apply/plan.json
+
+      - name: Enforce non-destructive protected Apply contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee /tmp/iac-protected-apply/plan-summary.json
+          import json
+          plan=json.load(open('/tmp/iac-protected-apply/plan.json'))
+          changes=[]
+          for rc in plan.get('resource_changes', []):
+              actions=rc.get('change', {}).get('actions', [])
+              if actions != ['no-op']:
+                  changes.append({'address': rc.get('address'), 'actions': actions})
+          destructive=[item for item in changes if 'delete' in item['actions']]
+          if destructive:
+              raise SystemExit(f'destructive protected Apply is forbidden; use governed decommission: {destructive}')
+          print(json.dumps({
+              'environment': '${{ needs.resolve.outputs.environment }}',
+              'request': '${{ needs.resolve.outputs.request_name }}',
+              'service': '${{ needs.resolve.outputs.service }}',
+              'capability': '${{ needs.resolve.outputs.capability }}',
+              'changes': changes,
+              'destructive': [],
+              'stateLock': True,
+              'exactSavedPlan': True,
+              'status': 'approved-for-protected-apply'
+          }, indent=2))
+          PY
+
+      - name: Apply exact saved plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" apply \
+            -input=false \
+            -auto-approve \
+            /tmp/iac-protected-apply/apply.tfplan
+          terraform -chdir="$STACK" output -json \
+            > /tmp/iac-protected-apply/terraform-outputs.json
+
+      - name: Verify IAM role binding
+        if: ${{ needs.resolve.outputs.service == 'iam-role-binding' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSIGNMENT_ID="$(jq -r '.role_assignment_ids.value | to_entries[0].value' /tmp/iac-protected-apply/terraform-outputs.json)"
+          ROLE_NAME="$(jq -r '.assignments | to_entries[0].value.role_definition_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          az rest --method get \
+            --url "https://management.azure.com${ASSIGNMENT_ID}?api-version=2022-04-01" \
+            -o json > /tmp/iac-protected-apply/iam-role-assignment.json
+          az role definition list --name "$ROLE_NAME" -o json \
+            > /tmp/iac-protected-apply/iam-role-definition.json
+          python - <<'PY' | tee /tmp/iac-protected-apply/verification-summary.json
+          import json
+          tfvars=json.load(open('/tmp/iac-protected-apply/request.tfvars.json'))
+          assignment=json.load(open('/tmp/iac-protected-apply/iam-role-assignment.json'))
+          definitions=json.load(open('/tmp/iac-protected-apply/iam-role-definition.json'))
+          wanted=next(iter(tfvars['assignments'].values()))
+          assert definitions, 'approved role definition not found'
+          definition=definitions[0]
+          assert assignment['properties']['principalId'].lower() == wanted['principal_id'].lower()
+          assert assignment['properties']['principalType'] == 'ServicePrincipal'
+          assert assignment['properties']['scope'].lower() == wanted['scope'].lower()
+          assert assignment['properties']['roleDefinitionId'].lower() == definition['id'].lower()
+          assert definition['roleName'] == wanted['role_definition_name']
+          assert definition['roleName'] in {'Reader','AcrPull','Storage Blob Data Reader','Key Vault Secrets User'}
+          assert '/resourcegroups/' in wanted['scope'].lower()
+          print(json.dumps({
+              'status':'passed', 'service':'iam-role-binding',
+              'scope':wanted['scope'], 'principalId':wanted['principal_id'],
+              'principalType':'ServicePrincipal', 'role':definition['roleName'],
+              'exactSavedPlanApplied':True, 'remoteState':True
+          }, indent=2))
+          PY
+
+      - name: Verify Standard Load Balancer
+        if: ${{ needs.resolve.outputs.service == 'load-balancer' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="$(jq -r '.resource_group_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          LB="$(jq -r '.load_balancer_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          EXPOSURE="$(jq -r '.exposure' /tmp/iac-protected-apply/request.tfvars.json)"
+          az group show -n "$RG" -o json > /tmp/iac-protected-apply/resource-group.json
+          az network lb show -g "$RG" -n "$LB" -o json > /tmp/iac-protected-apply/load-balancer.json
+          if [ "$EXPOSURE" = public ]; then
+            PIP_ID="$(jq -r '.public_ip_id.value' /tmp/iac-protected-apply/terraform-outputs.json)"
+            PIP_NAME="${PIP_ID##*/}"
+            az network public-ip show -g "$RG" -n "$PIP_NAME" -o json > /tmp/iac-protected-apply/public-ip.json
+          else
+            printf '{}\n' > /tmp/iac-protected-apply/public-ip.json
+          fi
+          python - <<'PY' | tee /tmp/iac-protected-apply/verification-summary.json
+          import json
+          t=json.load(open('/tmp/iac-protected-apply/request.tfvars.json'))
+          lb=json.load(open('/tmp/iac-protected-apply/load-balancer.json'))
+          out=json.load(open('/tmp/iac-protected-apply/terraform-outputs.json'))
+          assert lb['name'] == t['load_balancer_name']
+          assert lb['id'] == out['load_balancer_id']['value']
+          assert lb['sku']['name'] == 'Standard'
+          assert len(lb['frontendIPConfigurations']) == 1
+          assert len(lb.get('backendAddressPools') or []) == 1
+          assert len(lb.get('probes') or []) == 1
+          assert len(lb.get('loadBalancingRules') or []) == 1
+          if t['exposure'] == 'public':
+              pip=json.load(open('/tmp/iac-protected-apply/public-ip.json'))
+              assert pip['id'] == out['public_ip_id']['value']
+              assert pip['sku']['name'] == 'Standard'
+          else:
+              assert out['public_ip_id']['value'] is None
+          print(json.dumps({
+              'status':'passed','service':'load-balancer','loadBalancer':lb['name'],
+              'exposure':t['exposure'],'sku':'Standard','exactSavedPlanApplied':True,
+              'remoteState':True
+          }, indent=2))
+          PY
+
+      - name: Verify VPN Gateway foundation and no S2S connection
+        if: ${{ needs.resolve.outputs.service == 'vpn-gateway' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG="$(jq -r '.resource_group_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          VNET="$(jq -r '.virtual_network_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          GATEWAY="$(jq -r '.gateway_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          PIP="$(jq -r '.public_ip_name' /tmp/iac-protected-apply/request.tfvars.json)"
+          az network vnet show -g "$RG" -n "$VNET" -o json > /tmp/iac-protected-apply/vpn-vnet.json
+          az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n GatewaySubnet -o json > /tmp/iac-protected-apply/gateway-subnet.json
+          az network vnet-gateway show -g "$RG" -n "$GATEWAY" -o json > /tmp/iac-protected-apply/vpn-gateway.json
+          az network public-ip show -g "$RG" -n "$PIP" -o json > /tmp/iac-protected-apply/vpn-public-ip.json
+          az network vpn-connection list -g "$RG" -o json > /tmp/iac-protected-apply/vpn-connections.json
+          python - <<'PY' | tee /tmp/iac-protected-apply/verification-summary.json
+          import json
+          t=json.load(open('/tmp/iac-protected-apply/request.tfvars.json'))
+          out=json.load(open('/tmp/iac-protected-apply/terraform-outputs.json'))
+          vnet=json.load(open('/tmp/iac-protected-apply/vpn-vnet.json'))
+          subnet=json.load(open('/tmp/iac-protected-apply/gateway-subnet.json'))
+          gateway=json.load(open('/tmp/iac-protected-apply/vpn-gateway.json'))
+          pip=json.load(open('/tmp/iac-protected-apply/vpn-public-ip.json'))
+          connections=json.load(open('/tmp/iac-protected-apply/vpn-connections.json'))
+          assert vnet['id'] == out['virtual_network_id']['value']
+          assert subnet['id'] == out['gateway_subnet_id']['value']
+          assert subnet['name'] == 'GatewaySubnet'
+          assert gateway['id'] == out['vpn_gateway_id']['value']
+          assert gateway['gatewayType'] == 'Vpn'
+          assert gateway['vpnType'] == 'RouteBased'
+          assert pip['id'] == out['public_ip_id']['value']
+          assert pip['sku']['name'] == 'Standard'
+          assert connections == [], 'vpn-gateway/v1 must not create a secret-bearing S2S connection'
+          print(json.dumps({
+              'status':'passed','service':'vpn-gateway','gateway':gateway['name'],
+              'gatewayType':'Vpn','vpnType':'RouteBased','siteConnections':0,
+              'pskInRequest':False,'exactSavedPlanApplied':True,'remoteState':True
+          }, indent=2))
+          PY
+
+      - name: Publish protected IaC Apply evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.capability }}-${{ needs.resolve.outputs.request_name }}
+          path: /tmp/iac-protected-apply
+          if-no-files-found: error
+          retention-days: 90
