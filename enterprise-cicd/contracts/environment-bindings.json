@@ -56,6 +56,14 @@
         "azureMonitorWorkspace": "amw-platform-test"
       },
       "identities": {
+        "githubOidc": {
+          "principalType": "UserAssignedManagedIdentity",
+          "clientId": "f0a007c9-7e56-47bd-9b64-9e1c6b92b816",
+          "principalId": "ec01ea19-67ac-436f-ad28-73f568572769",
+          "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+          "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+          "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/sub-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k3s-gitops-test-uami"
+        },
         "postgresqlDba": {
           "objectId": null,
           "principalName": null,
