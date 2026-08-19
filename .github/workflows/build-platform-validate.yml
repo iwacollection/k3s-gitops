@@ -63,7 +63,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify immutable artifact build contract
+      - name: Verify immutable artifact and builder contract
         shell: bash
         run: |
           set -euo pipefail
@@ -72,19 +72,26 @@ jobs:
           grep -F -- '--sbom=true' "$workflow"
           grep -F -- '--provenance=mode=max' "$workflow"
           grep -F 'cosign sign --yes' "$workflow"
+          grep -F 'BUILD_IMAGE_DIGEST' "$workflow"
+          grep -F '@$BUILD_IMAGE_DIGEST' "$workflow"
+          grep -F 'builder:{image:$buildImage,digest:$buildImageDigest}' "$workflow"
+          grep -F 'BuildImageDigestBinding' enterprise-cicd/build-images/digests/active.json
+          grep -F '"mutableTagExecutionAllowed": false' enterprise-cicd/build-images/digests/active.json
 
       - name: Verify monorepo and dependency-cache isolation contract
         shell: bash
         run: |
           set -euo pipefail
           workflow=.github/workflows/reusable-application-ci-v1.yml
-          grep -F 'source_path: ${{ steps.resolve.outputs.source_path }}' "$workflow"
-          grep -F 'scan-ref: ${{ needs.resolve.outputs.source_path }}' "$workflow"
-          grep -F -- "--workspace '${{ needs.resolve.outputs.source_path }}'" "$workflow"
-          grep -F '${{ steps.prepare.outputs.cache_restore_prefix }}' "$workflow"
+          grep -F 'source_path:' "$workflow"
+          grep -F 'scan-ref:' "$workflow"
+          grep -F -- '--workspace' "$workflow"
+          grep -F 'cache_restore_prefix=' "$workflow"
+          grep -F 'cacheRestorePrefix' enterprise-cicd/ci-scripts/common/prepare_build_env.py
           grep -F 'tar -C "$source_dir" -czf /tmp/build-workspace.tgz .' "$workflow"
-          if grep -F '${{ runner.os }}-${{ runner.arch }}-platform-ci-' "$workflow"; then
-            echo 'Global cross-profile dependency-cache restore fallback is forbidden.' >&2
+          grep -F 'image="$LOGIN_SERVER/build/$image_name@$BUILD_IMAGE_DIGEST"' "$workflow"
+          if grep -F 'image="$LOGIN_SERVER/build/$BUILD_IMAGE"' "$workflow"; then
+            echo 'Mutable build-image tag execution is forbidden.' >&2
             exit 1
           fi
 
@@ -98,6 +105,7 @@ jobs:
           grep -F 'needs: [resolve, source-scan, build-test]' "$dag"
           grep -F 'needs: [resolve, image-build, image-scan, sbom]' "$dag"
           grep -F 'needs: [resolve, image-build, image-scan, sbom, sign]' "$dag"
+          grep -F 'needs: [resolve, build-test, image-build, image-scan, sbom, sign]' "$dag"
           grep -F 'strategy:' "$matrix"
           grep -F 'matrix:' "$matrix"
           grep -F 'uses: ./.github/workflows/reusable-application-ci-v1.yml' "$matrix"
@@ -111,7 +119,7 @@ jobs:
           grep -F 'reusable-application-ci-v1.yml@PLATFORM_RELEASE_REF' enterprise-cicd/github-actions/policies/application-caller.example.yml
           grep -F 'enterprise-ci-reusable-deprecated' .github/workflows/enterprise-ci-reusable.yml
           grep -F 'Reject deprecated arbitrary-command CI entrypoint' .github/workflows/enterprise-ci-reusable.yml
-          if grep -F '${{ inputs.build_command }}' .github/workflows/enterprise-ci-reusable.yml; then
+          if grep -F 'inputs.build_command' .github/workflows/enterprise-ci-reusable.yml; then
             echo 'Deprecated reusable must never execute caller-supplied build_command.' >&2
             exit 1
           fi
