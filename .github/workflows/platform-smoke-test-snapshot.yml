@@ -53,7 +53,7 @@ jobs:
           CLUSTER=k8s-test-cicd
           APP=platform-smoke-api
           FLUX_NAME=enterprise-cicd-test
-          EXPECTED_COMMIT=88483a338be1189c2fe607b31a991f0756b7d7a0
+          EXPECTED_COMMIT=bb5b5400b7cedc35f0ed399c3fa450bcc4515df8
           EXPECTED_IMAGE=acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api@sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba
 
           az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --overwrite-existing
