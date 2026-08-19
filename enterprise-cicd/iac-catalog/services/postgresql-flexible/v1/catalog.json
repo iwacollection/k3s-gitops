@@ -7,5 +7,9 @@
   "requestSchema": "request.schema.json",
   "defaults": "defaults.json",
   "policy": "policy.json",
-  "lifecycle": "preview"
+  "lifecycle": "active",
+  "riskClass": "stateful-workload",
+  "billingImpact": "billable",
+  "applyMode": "protected-workload-oidc",
+  "prodActivationGuard": "environment policy remains disabled until Entra DBA binding is configured"
 }

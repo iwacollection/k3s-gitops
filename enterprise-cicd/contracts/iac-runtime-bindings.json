@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "azure": {
     "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
     "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a"
@@ -56,6 +56,10 @@
         "applicationGatewayWrite": false,
         "roleAssignmentWrite": false
       },
+      "foundation": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-dev-foundation-apply"
+      },
       "edge": {
         "activationStatus": "ready",
         "githubEnvironment": "iac-dev-edge-apply",
@@ -87,12 +91,7 @@
         "delegatedRoleId": "f58310d9-a9f6-439a-9e8d-f62e7b41a168",
         "conditionVersion": "2.0",
         "allowedPrincipalType": "ServicePrincipal",
-        "allowedRoles": [
-          "Reader",
-          "AcrPull",
-          "Storage Blob Data Reader",
-          "Key Vault Secrets User"
-        ],
+        "allowedRoles": ["Reader", "AcrPull", "Storage Blob Data Reader", "Key Vault Secrets User"],
         "allowedRoleDefinitionIds": [
           "acdd72a7-3385-48ef-bd42-f606fba81ae7",
           "7f951dda-4ed3-4680-a7ca-43fe172d538d",
@@ -106,34 +105,35 @@
         "arbitraryRoleAssignmentAllowed": false,
         "stateDataRole": "Storage Blob Data Contributor",
         "stateScope": "container"
+      },
+      "workload": {
+        "activationStatus": "not-started",
+        "githubEnvironment": "iac-dev-workload-apply",
+        "supportedServices": ["acr", "storage", "key-vault", "service-bus", "managed-redis", "postgresql-flexible"]
       }
     },
     "test": {
       "activationStatus": "not-started",
-      "networkFoundation": {
-        "activationStatus": "not-started"
-      },
-      "edge": {
+      "foundation": {"activationStatus": "not-started", "githubEnvironment": "iac-test-foundation-apply"},
+      "networkFoundation": {"activationStatus": "not-started"},
+      "edge": {"activationStatus": "not-started", "githubEnvironment": "iac-test-edge-apply"},
+      "iam": {"activationStatus": "not-started", "githubEnvironment": "iac-test-iam-apply"},
+      "workload": {
         "activationStatus": "not-started",
-        "githubEnvironment": "iac-test-edge-apply"
-      },
-      "iam": {
-        "activationStatus": "not-started",
-        "githubEnvironment": "iac-test-iam-apply"
+        "githubEnvironment": "iac-test-workload-apply",
+        "supportedServices": ["acr", "storage", "key-vault", "service-bus", "managed-redis", "postgresql-flexible"]
       }
     },
     "prod": {
       "activationStatus": "not-started",
-      "networkFoundation": {
-        "activationStatus": "not-started"
-      },
-      "edge": {
+      "foundation": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-foundation-apply"},
+      "networkFoundation": {"activationStatus": "not-started"},
+      "edge": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-edge-apply"},
+      "iam": {"activationStatus": "not-started", "githubEnvironment": "iac-prod-iam-apply"},
+      "workload": {
         "activationStatus": "not-started",
-        "githubEnvironment": "iac-prod-edge-apply"
-      },
-      "iam": {
-        "activationStatus": "not-started",
-        "githubEnvironment": "iac-prod-iam-apply"
+        "githubEnvironment": "iac-prod-workload-apply",
+        "supportedServices": ["acr", "storage", "key-vault", "service-bus", "managed-redis", "postgresql-flexible"]
       }
     }
   }

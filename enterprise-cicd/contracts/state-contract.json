@@ -1,5 +1,5 @@
 {
-  "version": "v1",
+  "version": "v2",
   "backend": {
     "type": "azurerm",
     "storage": "azure-blob",
@@ -17,16 +17,22 @@
     "split_when_lifecycle_differs": true,
     "split_when_rbac_differs": true,
     "split_high_blast_radius_platform_from_workloads": true,
-    "catalog_request_state_isolated": true
+    "catalog_request_state_isolated": true,
+    "environment_scoped_platform_state_isolated": true
   },
   "platform_keys": {
     "governance": "platform/governance.tfstate",
-    "connectivity": "platform/connectivity.tfstate",
     "identity": "platform/identity.tfstate",
     "management": "platform/management.tfstate",
     "acr": "platform/acr.tfstate",
     "aks": "platform/aks.tfstate"
   },
+  "environment_scoped_platform_stacks": [
+    "connectivity",
+    "observability",
+    "aks-observability"
+  ],
+  "platform_environment_key_pattern": "platform/{environment}/{stack}.tfstate",
   "workload_key_pattern": "workload/{environment}/{workload}.tfstate",
   "catalog_key_pattern": "catalog/{environment}/{service}/{request}.tfstate",
   "production_target": {
