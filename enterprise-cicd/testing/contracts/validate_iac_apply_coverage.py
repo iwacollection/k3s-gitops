@@ -107,7 +107,17 @@ def main() -> None:
         subprocess.run(["bash", "-n", str(script)], check=True)
 
     delivery = text(scripts[0])
-    require("WORKLOAD_SCRIPT=" in delivery and "three isolated protected Apply planes" in delivery, "unified delivery activation does not include Workload Apply")
+    for token in (
+        "FOUNDATION_SCRIPT=", "EDGE_SCRIPT=", "IAM_SCRIPT=", "WORKLOAD_SCRIPT=",
+        "Activating protected Platform Foundation capability",
+        "Activating protected Edge network capability",
+        "Activating conditioned IAM capability",
+        "Activating protected workload services capability",
+        "four isolated protected Apply planes",
+        '"foundation": foundation', '"edge": edge', '"iam": iam', '"workload": workload',
+    ):
+        require(token in delivery, f"unified delivery activation missing {token}")
+    require(delivery.index('"$FOUNDATION_SCRIPT" --environment "$ENVIRONMENT" --apply') < delivery.index('"$WORKLOAD_SCRIPT" --environment "$ENVIRONMENT" --apply'), "Foundation must activate before Workload plane")
 
     workload_script = text(scripts[3])
     role_body = workload_script.split('ROLE_BODY="$(cat <<EOF', 1)[1].split('\nEOF\n)"', 1)[0]
@@ -166,6 +176,7 @@ def main() -> None:
     print(f"active_catalogs={len(active)}")
     print("all_active_catalogs_have_apply_mode=true")
     print("apply_planes=standard,foundation,edge,iam,workload")
+    print("unified_activation=foundation->edge->iam->workload")
     print("canonical_apply=exact-saved-plan,state-lock,no-delete,post-apply-no-changes")
     print("platform_foundation_state=environment-isolated")
 
