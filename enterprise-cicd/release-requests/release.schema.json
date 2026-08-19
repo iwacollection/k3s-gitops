@@ -24,7 +24,11 @@
         "from": {"enum": ["build", "dev", "test"]},
         "to": {"enum": ["dev", "test", "prod"]},
         "releaseProfile": {"type": "string"},
-        "changeReason": {"type": "string", "minLength": 1}
+        "changeReason": {"type": "string", "minLength": 1},
+        "sourceReleaseRequest": {
+          "type": "string",
+          "pattern": "^enterprise-cicd/release-requests/[a-zA-Z0-9._-]+\\.json$"
+        }
       },
       "additionalProperties": false
     }
