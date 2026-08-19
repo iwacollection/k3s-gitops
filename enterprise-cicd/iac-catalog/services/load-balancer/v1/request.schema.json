@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Load Balancer Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["exposure", "subnetResourceId", "frontendPrivateIpAddress", "frontendPort", "backendPort", "protocol", "probeProtocol", "probePort", "probeRequestPath", "idleTimeoutMinutes"],
+  "properties": {
+    "exposure": {"type": "string", "enum": ["public", "internal"]},
+    "subnetResourceId": {"type": "string"},
+    "frontendPrivateIpAddress": {"type": "string"},
+    "frontendPort": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "backendPort": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "protocol": {"type": "string", "enum": ["Tcp", "Udp"]},
+    "probeProtocol": {"type": "string", "enum": ["Tcp", "Http", "Https"]},
+    "probePort": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "probeRequestPath": {"type": "string"},
+    "idleTimeoutMinutes": {"type": "integer", "minimum": 4, "maximum": 30}
+  }
+}

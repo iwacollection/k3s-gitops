@@ -1,0 +1,23 @@
+{
+  "dev": {
+    "enabled": true,
+    "allowedValues": {
+      "principalType": ["ServicePrincipal"],
+      "roleName": ["Reader", "AcrPull", "Storage Blob Data Reader", "Key Vault Secrets User"]
+    }
+  },
+  "test": {
+    "enabled": true,
+    "allowedValues": {
+      "principalType": ["ServicePrincipal"],
+      "roleName": ["Reader", "AcrPull", "Storage Blob Data Reader", "Key Vault Secrets User"]
+    }
+  },
+  "prod": {
+    "enabled": true,
+    "allowedValues": {
+      "principalType": ["ServicePrincipal"],
+      "roleName": ["Reader", "AcrPull", "Storage Blob Data Reader", "Key Vault Secrets User"]
+    }
+  }
+}

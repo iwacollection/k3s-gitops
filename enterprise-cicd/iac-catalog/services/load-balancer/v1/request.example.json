@@ -1,0 +1,23 @@
+{
+  "apiVersion": "platform.iac/v1",
+  "kind": "InfrastructureRequest",
+  "metadata": {
+    "name": "example-public-lb",
+    "owner": "platform-sre",
+    "application": "example-lb"
+  },
+  "spec": {
+    "environment": "dev",
+    "region": "eastus",
+    "service": "load-balancer",
+    "templateVersion": "v1",
+    "parameters": {
+      "exposure": "public",
+      "frontendPort": 443,
+      "backendPort": 8443,
+      "protocol": "Tcp",
+      "probeProtocol": "Tcp",
+      "probePort": 8443
+    }
+  }
+}
