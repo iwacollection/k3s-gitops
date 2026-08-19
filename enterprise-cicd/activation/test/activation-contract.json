@@ -40,8 +40,8 @@
       "minimumRoles": [
         {
           "role": "Reader",
-          "scope": "resource-group:group-test",
-          "purpose": "read AKS and Flux control-plane state"
+          "scope": "aks:k8s-test-cicd",
+          "purpose": "read the AKS resource and its Flux extension/configuration state"
         },
         {
           "role": "Azure Kubernetes Service Cluster User Role",
@@ -56,7 +56,7 @@
         {
           "role": "AcrPull",
           "scope": "acr:acrcicdc12c3a3699d8",
-          "purpose": "read/pull approved immutable artifact"
+          "purpose": "read/pull approved immutable artifact and repository metadata"
         }
       ],
       "forbiddenRoles": [
