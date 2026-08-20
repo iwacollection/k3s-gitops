@@ -16,6 +16,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: terraform-apply-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   plan:
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
