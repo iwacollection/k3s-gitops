@@ -1,0 +1,47 @@
+name: Terraform Production Guardrails
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+      - '.github/workflows/terraform-production-guardrails.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-safety:
+    name: Terraform Safety Gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init Validation
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Detect dangerous lifecycle changes
+        run: |
+          if grep -R 'prevent_destroy *= *false' .; then
+            echo 'Critical resources cannot disable prevent_destroy'
+            exit 1
+          fi
+
+      - name: Production Change Reminder
+        run: |
+          echo 'Production apply must use approved terraform plan artifact.'
+          echo 'Existing Azure resources must be imported before management.'
