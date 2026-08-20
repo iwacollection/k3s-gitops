@@ -18,8 +18,8 @@ permissions:
 
 jobs:
   apply:
-    environment: ${{ inputs.environment }}
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
+      environment: ${{ inputs.environment }}
       working_directory: ${{ inputs.working_directory }}
       command: apply
