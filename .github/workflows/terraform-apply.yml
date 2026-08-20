@@ -10,7 +10,7 @@ on:
       working_directory:
         description: terraform working directory
         required: true
-        default: infra/environments/dev
+        default: infrastructure/terraform/environments/dev
 
 permissions:
   id-token: write
