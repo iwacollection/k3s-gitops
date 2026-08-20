@@ -17,9 +17,11 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    environment: ${{ vars.TARGET_ENVIRONMENT }}
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -39,5 +41,24 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Execute
-        run: terraform ${{ inputs.command }}
+      - name: Terraform Plan
+        if: inputs.command == 'plan'
+        run: terraform plan -out=tfplan
+
+      - name: Upload Terraform Plan
+        if: inputs.command == 'plan'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ inputs.working_directory }}/tfplan
+
+      - name: Download Terraform Plan
+        if: inputs.command == 'apply'
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ inputs.working_directory }}
+
+      - name: Terraform Apply
+        if: inputs.command == 'apply'
+        run: terraform apply -auto-approve tfplan
