@@ -1,0 +1,36 @@
+name: Terraform Security Gate
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-security:
+    name: Terraform Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform Init
+        working-directory: infra/environments/dev
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: infra/environments/dev
+        run: terraform validate
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
