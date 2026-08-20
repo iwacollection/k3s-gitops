@@ -1,12 +1,16 @@
-name: terraform-apply
+name: Terraform Apply
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: target environment
+        description: target GitHub environment
         required: true
         default: iac-dev-apply
+      working_directory:
+        description: terraform working directory
+        required: true
+        default: infrastructure/terraform/environments/dev
 
 permissions:
   id-token: write
@@ -15,6 +19,7 @@ permissions:
 jobs:
   apply:
     environment: ${{ inputs.environment }}
-    uses: ./.github/workflows/terraform-reusable.yml
+    uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
-      environment: ${{ inputs.environment }}
+      working_directory: ${{ inputs.working_directory }}
+      command: apply
