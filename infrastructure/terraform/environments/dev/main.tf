@@ -24,13 +24,11 @@ module "network" {
   resource_group_name = azurerm_resource_group.platform.name
   location            = azurerm_resource_group.platform.location
 
-  vnet_name    = "vnet-platform-dev"
-  subnet_name  = "snet-platform-dev"
-
-  address_space = [
+  vnet_name       = "vnet-platform-dev"
+  subnet_name     = "snet-platform-dev"
+  address_space   = [
     "10.10.0.0/16"
   ]
-
   subnet_prefixes = [
     "10.10.1.0/24"
   ]
