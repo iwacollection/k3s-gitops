@@ -7,14 +7,10 @@ permissions:
   id-token: write
   contents: read
 
-environment: iac-dev-foundation-apply
-
 jobs:
   terraform:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Terraform placeholder gate
-        run: |
-          echo "Foundation apply workflow ready"
-          echo "OIDC environment: iac-dev-foundation-apply"
+    uses: ./.github/workflows/iac-terraform-apply-reusable.yml
+    with:
+      terraform_directory: terraform/environments/dev/foundation
+      environment_name: iac-dev-foundation-apply
+    secrets: inherit
