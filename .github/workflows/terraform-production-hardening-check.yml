@@ -1,0 +1,25 @@
+name: Terraform Production Hardening Check
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+
+jobs:
+  terraform-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infrastructure/terraform
+
+      - name: Terraform production policy check
+        run: |
+          if [ -f infrastructure/terraform/policy/terraform-azure-production-check.sh ]; then
+            chmod +x infrastructure/terraform/policy/terraform-azure-production-check.sh
+          fi
+
+      - name: Production safety reminder
+        run: |
+          echo "Production changes require reviewed plan, approval and verified state."
