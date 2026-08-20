@@ -15,5 +15,6 @@ jobs:
   terraform-plan:
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
+      environment: iac-dev-apply
       working_directory: infrastructure/terraform/environments/dev
       command: plan
