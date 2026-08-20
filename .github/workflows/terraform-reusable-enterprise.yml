@@ -25,6 +25,8 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    env:
+      ARM_USE_AZUREAD: true
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
