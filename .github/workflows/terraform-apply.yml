@@ -24,6 +24,7 @@ concurrency:
 jobs:
   plan:
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
+    secrets: inherit
     with:
       environment: ${{ inputs.environment }}
       working_directory: ${{ inputs.working_directory }}
@@ -32,6 +33,7 @@ jobs:
   apply:
     needs: plan
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
+    secrets: inherit
     with:
       environment: ${{ inputs.environment }}
       working_directory: ${{ inputs.working_directory }}
