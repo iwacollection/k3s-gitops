@@ -32,6 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
       - name: Azure Login OIDC
         uses: azure/login@v2
         with:
@@ -43,14 +46,14 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -lock-timeout=5m
 
       - name: Terraform Validate
         run: terraform validate
 
       - name: Terraform Plan
         if: inputs.command == 'plan'
-        run: terraform plan -out=tfplan
+        run: terraform plan -lock-timeout=5m -out=tfplan
 
       - name: Upload Terraform Plan
         if: inputs.command == 'plan'
@@ -58,6 +61,7 @@ jobs:
         with:
           name: terraform-plan-${{ inputs.environment }}
           path: ${{ inputs.working_directory }}/tfplan
+          retention-days: 7
 
       - name: Download Terraform Plan
         if: inputs.command == 'apply'
@@ -68,4 +72,4 @@ jobs:
 
       - name: Terraform Apply
         if: inputs.command == 'apply'
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan
