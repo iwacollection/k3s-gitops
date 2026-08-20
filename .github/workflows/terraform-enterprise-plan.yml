@@ -1,0 +1,23 @@
+name: terraform-enterprise-plan
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/environments/dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive ../../..
+      - run: terraform init
+      - run: terraform validate
+      - run: terraform plan
