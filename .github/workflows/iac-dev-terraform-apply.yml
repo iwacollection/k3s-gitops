@@ -2,6 +2,10 @@ name: iac-dev-terraform-apply
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/iac-dev-terraform-apply.yml'
 
 permissions:
   id-token: write
@@ -9,8 +13,14 @@ permissions:
 
 jobs:
   terraform:
+    name: Terraform Apply Dev
     runs-on: ubuntu-latest
-    environment: iac-dev-foundation-apply
+    environment: iac-dev-apply
+
+    defaults:
+      run:
+        working-directory: infra/environments/dev
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,14 +32,17 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
       - name: Terraform Init
-        working-directory: infra/environments/dev
         run: terraform init
 
+      - name: Terraform Validate
+        run: terraform validate
+
       - name: Terraform Plan
-        working-directory: infra/environments/dev
-        run: terraform plan
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
-        working-directory: infra/environments/dev
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
