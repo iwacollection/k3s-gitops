@@ -15,6 +15,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 concurrency:
   group: terraform-apply-${{ inputs.environment }}
@@ -22,6 +23,7 @@ concurrency:
 
 jobs:
   plan:
+    timeout-minutes: 30
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
       environment: ${{ inputs.environment }}
@@ -30,6 +32,7 @@ jobs:
 
   apply:
     needs: plan
+    timeout-minutes: 30
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
       environment: ${{ inputs.environment }}
