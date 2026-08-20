@@ -15,5 +15,5 @@ jobs:
   terraform-plan:
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
-      environment: dev
-      terraform_action: plan
+      working_directory: infrastructure/terraform/environments/dev
+      command: plan
