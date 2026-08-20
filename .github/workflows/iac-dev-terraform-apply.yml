@@ -17,6 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: iac-dev-apply
 
+    env:
+      ARM_USE_AZUREAD: true
+      ARM_SUBSCRIPTION_ID: c12c3a36-99d8-4741-bcef-cd7df5d5cd4a
+      ARM_TENANT_ID: a1c6a587-dc3b-40a5-9438-445d896bb5f2
+      ARM_CLIENT_ID: 096a423b-d026-471a-baf7-c7c36d20d1af
+
     defaults:
       run:
         working-directory: infra/environments/dev
