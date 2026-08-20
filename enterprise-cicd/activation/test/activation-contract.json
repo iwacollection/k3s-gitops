@@ -1,0 +1,99 @@
+{
+  "apiVersion": "platform.activation/v1",
+  "kind": "EnvironmentActivation",
+  "metadata": {
+    "environment": "test",
+    "mode": "logical-environment-on-shared-aks"
+  },
+  "spec": {
+    "readinessEvidence": {
+      "workflow": "Azure TEST Readiness Inventory",
+      "runId": 32208945916,
+      "status": "blocked",
+      "blockers": [
+        "missing-test-github-oidc-binding",
+        "missing-test-flux-configuration"
+      ]
+    },
+    "physicalBoundary": {
+      "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+      "resourceGroup": "group-test",
+      "aksCluster": "k8s-test-cicd",
+      "acr": "acrcicdc12c3a3699d8",
+      "sharedWithDevInLab": true
+    },
+    "logicalBoundaries": {
+      "githubEnvironment": "test",
+      "gitopsBranch": "gitops/test",
+      "kubernetesNamespace": "cicd-test",
+      "fluxConfiguration": "enterprise-cicd-test",
+      "fluxNamespace": "enterprise-cicd-test"
+    },
+    "identity": {
+      "strategy": "dedicated-user-assigned-managed-identity",
+      "resourceGroup": "sub-test",
+      "name": "k3s-gitops-test-uami",
+      "federatedCredentialName": "github-k3s-gitops-test",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "subject": "repo:iwacollection/k3s-gitops:environment:test",
+      "audience": "api://AzureADTokenExchange",
+      "minimumRoles": [
+        {
+          "role": "Reader",
+          "scope": "aks:k8s-test-cicd",
+          "purpose": "read the AKS resource and its Flux extension/configuration state"
+        },
+        {
+          "role": "Azure Kubernetes Service Cluster User Role",
+          "scope": "aks:k8s-test-cicd",
+          "purpose": "obtain non-admin kubeconfig"
+        },
+        {
+          "role": "Azure Kubernetes Service RBAC Reader",
+          "scope": "aks:k8s-test-cicd/namespace:cicd-test",
+          "purpose": "read TEST deployment and EndpointSlice state only"
+        },
+        {
+          "role": "AcrPull",
+          "scope": "acr:acrcicdc12c3a3699d8",
+          "purpose": "read/pull approved immutable artifact and repository metadata"
+        }
+      ],
+      "forbiddenRoles": [
+        "Owner",
+        "Contributor",
+        "User Access Administrator",
+        "Azure Kubernetes Service RBAC Writer",
+        "Azure Kubernetes Service RBAC Admin",
+        "AcrPush"
+      ]
+    },
+    "artifact": {
+      "repository": "acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api",
+      "digest": "sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba",
+      "sourceEnvironment": "dev",
+      "targetEnvironment": "test",
+      "rebuildAllowed": false,
+      "sameDigestRequired": true
+    },
+    "gitops": {
+      "repository": "https://github.com/iwacollection/k3s-gitops",
+      "branch": "gitops/test",
+      "configurationName": "enterprise-cicd-test",
+      "configurationNamespace": "enterprise-cicd-test",
+      "kustomization": {
+        "name": "apps-test",
+        "path": "./enterprise-cicd/gitops/environments/test",
+        "prune": true
+      }
+    },
+    "controls": {
+      "defaultMode": "plan-only",
+      "applyRequiresExplicitFlag": true,
+      "noNewAks": true,
+      "noNewVnet": true,
+      "noArtifactRebuild": true,
+      "fluxRemainsOnlyKubernetesWriter": true
+    }
+  }
+}

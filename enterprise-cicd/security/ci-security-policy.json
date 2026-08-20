@@ -1,0 +1,21 @@
+{
+  "apiVersion": "platform.security/v1",
+  "kind": "CISecurityPolicy",
+  "spec": {
+    "source": {
+      "secretScan": {"required": true},
+      "vulnerabilityScan": {"required": true, "failSeverities": ["HIGH", "CRITICAL"]},
+      "misconfigurationScan": {"required": true}
+    },
+    "container": {
+      "vulnerabilityScan": {"required": true, "failSeverities": ["HIGH", "CRITICAL"]},
+      "sbom": {"required": true, "format": "spdx-json"},
+      "provenance": {"required": true, "mode": "max"},
+      "signature": {"required": true, "mode": "sigstore-keyless"}
+    },
+    "artifact": {
+      "immutableDigestRequired": true,
+      "latestTagAsPromotionContractAllowed": false
+    }
+  }
+}

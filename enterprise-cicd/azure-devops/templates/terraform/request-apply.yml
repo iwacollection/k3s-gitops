@@ -1,0 +1,67 @@
+parameters:
+  - name: azureServiceConnection
+    type: string
+  - name: planArtifactName
+    type: string
+    default: terraform-plan
+
+steps:
+  - checkout: self
+    clean: true
+
+  - task: DownloadPipelineArtifact@2
+    displayName: Download approved Terraform plan
+    inputs:
+      artifact: ${{ parameters.planArtifactName }}
+      path: $(Pipeline.Workspace)/iac-plan
+
+  - task: AzureCLI@2
+    displayName: Apply saved Terraform plan
+    inputs:
+      azureSubscription: ${{ parameters.azureServiceConnection }}
+      addSpnToEnvironment: true
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        WORK="$(Pipeline.Workspace)/iac-plan"
+        ROOT_STACK=$(cat "$WORK/root-stack.txt")
+
+        test -f "$WORK/tfplan"
+        test -f "$WORK/backend.hcl"
+        test -f "$WORK/request.json"
+
+        OIDC_REQUEST_URL="${SYSTEM_OIDCREQUESTURI}?api-version=7.1&serviceConnectionId=${AZURESUBSCRIPTION_SERVICE_CONNECTION_ID}"
+        ARM_OIDC_TOKEN=$(curl -fsS \
+          -H 'Content-Length: 0' \
+          -H 'Content-Type: application/json' \
+          -H "Authorization: Bearer ${SYSTEM_ACCESSTOKEN}" \
+          -X POST "$OIDC_REQUEST_URL" | jq -r '.oidcToken')
+
+        export ARM_CLIENT_ID="$servicePrincipalId"
+        export ARM_TENANT_ID="$tenantId"
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+        export ARM_OIDC_TOKEN
+        export ARM_USE_OIDC=true
+        export ARM_USE_AZUREAD=true
+
+        terraform -chdir="$ROOT_STACK" init \
+          -input=false \
+          -backend-config="$WORK/backend.hcl"
+
+        terraform -chdir="$ROOT_STACK" apply \
+          -input=false \
+          -lock-timeout=5m \
+          "$WORK/tfplan"
+
+        terraform -chdir="$ROOT_STACK" output -json > "$WORK/outputs.json"
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish apply evidence
+    inputs:
+      targetPath: $(Pipeline.Workspace)/iac-plan
+      artifact: terraform-apply-evidence
+      publishLocation: pipeline

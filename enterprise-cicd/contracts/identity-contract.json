@@ -1,0 +1,59 @@
+{
+  "version": "v1",
+  "authentication": {
+    "target": "workload-identity-federation",
+    "long_lived_client_secret_allowed": false,
+    "interactive_user_login_allowed_in_ci": false
+  },
+  "terraform": {
+    "identity_pattern": "uami-tf-{scope}-{environment}-{operation}",
+    "operations": {
+      "plan": {
+        "azure_access": "read-only-at-target-scope",
+        "state_access": "read",
+        "may_apply": false
+      },
+      "apply": {
+        "azure_access": "minimum-required-write-at-target-scope",
+        "state_access": "read-write",
+        "may_apply": true
+      }
+    },
+    "environment_isolation": true,
+    "cross_environment_identity_reuse": false
+  },
+  "application_ci": {
+    "identity_name": "uami-ci-app-build",
+    "allowed_capabilities": ["read-dependency-sources", "push-approved-artifacts-to-acr"],
+    "subscription_contributor_allowed": false,
+    "aks_cluster_admin_allowed": false
+  },
+  "kubernetes_cd": {
+    "target_control_plane": "flux",
+    "ci_direct_prod_cluster_admin_allowed": false,
+    "artifact_pull_identity": "aks-kubelet-or-workload-identity",
+    "verification": {
+      "identity_pattern": "uami-cd-verifier-{environment}",
+      "authentication": "workload-identity-federation",
+      "cluster_admin_allowed": false,
+      "write_allowed": false,
+      "secret_read_allowed": false,
+      "azure_control_plane_roles": ["Reader", "Azure Kubernetes Service Cluster User Role"],
+      "kubernetes_data_plane_role": "Azure Kubernetes Service RBAC Reader",
+      "kubernetes_data_plane_scope": "namespace",
+      "environments_separate": true,
+      "responsibility": ["observe-flux", "observe-rollout", "verify-artifact-digest", "observe-health", "read-approved-metrics"]
+    }
+  },
+  "bootstrap": {
+    "human_privileged_identity": "temporary-only",
+    "daily_pipeline_use": false,
+    "must_be_audited": true
+  },
+  "azure_devops": {
+    "service_connections_per_environment": true,
+    "plan_apply_service_connections_separate": true,
+    "prod_apply_checks": ["required-template", "branch-control", "manual-approval"],
+    "environment_checks": ["exclusive-lock"]
+  }
+}

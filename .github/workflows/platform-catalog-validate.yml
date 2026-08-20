@@ -1,0 +1,34 @@
+name: Platform Catalog Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/ci-catalog/**'
+      - 'enterprise-cicd/application-definitions/**'
+      - 'enterprise-cicd/release-catalog/**'
+      - 'enterprise-cicd/release-requests/**'
+      - 'enterprise-cicd/promotion/**'
+      - 'enterprise-cicd/testing/contracts/validate_platform_catalogs.py'
+      - '.github/workflows/platform-catalog-validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'enterprise-cicd/ci-catalog/**'
+      - 'enterprise-cicd/application-definitions/**'
+      - 'enterprise-cicd/release-catalog/**'
+      - 'enterprise-cicd/release-requests/**'
+      - 'enterprise-cicd/promotion/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-catalogs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate platform catalogs
+        run: python enterprise-cicd/testing/contracts/validate_platform_catalogs.py

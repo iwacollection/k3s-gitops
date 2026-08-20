@@ -1,0 +1,18 @@
+{
+  "apiVersion": "platform.gitops/v1",
+  "kind": "GitOpsPolicy",
+  "spec": {
+    "sourceOfTruth": "git",
+    "controller": "microsoft.flux",
+    "deploymentMode": "pull",
+    "allowedTransitions": ["build->dev", "dev->test", "test->prod"],
+    "artifactIdentity": "sha256-digest",
+    "rebuildDuringPromotion": false,
+    "directCiClusterWrite": false,
+    "prRequired": true,
+    "productionApprovalRequired": true,
+    "productionLockRequired": true,
+    "prune": true,
+    "rollback": "previous-approved-digest"
+  }
+}

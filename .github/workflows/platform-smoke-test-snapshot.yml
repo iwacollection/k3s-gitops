@@ -1,0 +1,97 @@
+name: Platform Smoke TEST Snapshot
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/platform-smoke-test-snapshot.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve TEST OIDC
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/environment-bindings.json
+          echo "client_id=$(jq -r '.environments.test.identities.githubOidc.clientId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r '.environments.test.identities.githubOidc.tenantId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r '.environments.test.identities.githubOidc.subscriptionId' "$BINDING")" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ steps.auth.outputs.client_id }}
+          tenant-id: ${{ steps.auth.outputs.tenant_id }}
+          subscription-id: ${{ steps.auth.outputs.subscription_id }}
+
+      - uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.7
+
+      - name: Capture TEST runtime snapshot
+        shell: bash
+        env:
+          SUBSCRIPTION_ID: ${{ steps.auth.outputs.subscription_id }}
+        run: |
+          set -euo pipefail
+          RG=group-test
+          CLUSTER=k8s-test-cicd
+          APP=platform-smoke-api
+          FLUX_NAME=enterprise-cicd-test
+          EXPECTED_COMMIT=bb5b5400b7cedc35f0ed399c3fa450bcc4515df8
+          EXPECTED_IMAGE=acrcicdc12c3a3699d8.azurecr.io/apps/platform-smoke-api@sha256:b0faf7a8f90618cd7a6b081085d3af3ca666afa015aac9827f71cf198816e2ba
+
+          az aks get-credentials --resource-group "$RG" --name "$CLUSTER" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+          FLUX_URL="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.ContainerService/managedClusters/$CLUSTER/providers/Microsoft.KubernetesConfiguration/fluxConfigurations/$FLUX_NAME?api-version=2025-04-01"
+          FLUX_JSON="$(az rest --method get --url "$FLUX_URL" -o json)"
+          echo "=== FLUX ==="
+          echo "state=$(jq -r '.properties.provisioningState // empty' <<<"$FLUX_JSON")"
+          echo "compliance=$(jq -r '.properties.complianceState // empty' <<<"$FLUX_JSON")"
+          echo "branch=$(jq -r '.properties.gitRepository.repositoryRef.branch // empty' <<<"$FLUX_JSON")"
+          echo "sourceCommit=$(jq -r '.properties.sourceSyncedCommitId // empty' <<<"$FLUX_JSON")"
+          echo "error=$(jq -r '.properties.errorMessage // empty' <<<"$FLUX_JSON")"
+          echo "expectedCommit=$EXPECTED_COMMIT"
+
+          echo "=== FLUX OBJECT STATUSES ==="
+          jq -r '.properties.statuses[]? | "kind=\(.kind) name=\(.name) compliance=\(.complianceState)"' <<<"$FLUX_JSON"
+          jq -r '.properties.statuses[]? | .statusConditions[]? | "kind-condition type=\(.type) status=\(.status) reason=\(.reason) message=\(.message)"' <<<"$FLUX_JSON"
+
+          echo "=== DEPLOYMENT ==="
+          if kubectl -n cicd-test get deployment "$APP" -o json >/tmp/deployment.json 2>/tmp/deployment.err; then
+            echo "image=$(jq -r '.spec.template.spec.containers[0].image // empty' /tmp/deployment.json)"
+            echo "desired=$(jq -r '.spec.replicas // 0' /tmp/deployment.json)"
+            echo "available=$(jq -r '.status.availableReplicas // 0' /tmp/deployment.json)"
+            echo "ready=$(jq -r '.status.readyReplicas // 0' /tmp/deployment.json)"
+            echo "updated=$(jq -r '.status.updatedReplicas // 0' /tmp/deployment.json)"
+            echo "conditions=$(jq -c '.status.conditions // []' /tmp/deployment.json)"
+          else
+            echo "deployment_not_found=true"
+            cat /tmp/deployment.err
+          fi
+          echo "expectedImage=$EXPECTED_IMAGE"
+
+          echo "=== PODS ==="
+          kubectl -n cicd-test get pods -l app.kubernetes.io/name="$APP" -o wide || true
+
+          echo "=== ENDPOINTS ==="
+          kubectl -n cicd-test get endpointslices.discovery.k8s.io --selector "kubernetes.io/service-name=$APP" -o json | jq '{items:(.items|length),readyEndpoints:([.items[].endpoints[]? | select(.conditions.ready == true)]|length)}' || true
+
+          echo "=== EVENTS ==="
+          kubectl -n cicd-test get events --sort-by=.lastTimestamp | tail -n 30 || true

@@ -1,0 +1,35 @@
+{
+  "apiVersion": "platform.github/v1",
+  "kind": "EnvironmentPolicy",
+  "metadata": {
+    "name": "prod",
+    "environment": "prod"
+  },
+  "spec": {
+    "purpose": "OIDC trust and approval boundary for governed PROD read/verification workflows",
+    "mustExistBeforeAzureFederation": true,
+    "implicitCreationAllowed": false,
+    "oidcSubject": "repo:iwacollection/k3s-gitops:environment:prod",
+    "deploymentBranchPolicy": {
+      "mode": "selected-branches",
+      "allowed": [
+        "design/azure-enterprise-control-plane-v1",
+        "main"
+      ]
+    },
+    "requiredReviewers": true,
+    "preventSelfReview": true,
+    "environmentSecretsRequired": false,
+    "longLivedAzureCredentialsAllowed": false,
+    "requiredWorkflowProperties": {
+      "idTokenWrite": true,
+      "azureClientSecretForbidden": true
+    },
+    "notes": [
+      "PROD is an approval and identity boundary even when the Lab reuses the shared AKS/ACR physical boundary.",
+      "The PROD OIDC principal is read/verification-only; Flux remains the Kubernetes write plane.",
+      "Before PR #5 is merged, the design branch may be temporarily allowed only for controlled activation and verification.",
+      "After merge, remove the design branch and retain trusted protected branches only."
+    ]
+  }
+}

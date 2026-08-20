@@ -1,0 +1,320 @@
+name: IaC DEV Decommission Apply
+
+on:
+  push:
+    branches:
+      - design/azure-enterprise-control-plane-v1
+      - main
+    paths:
+      - 'enterprise-cicd/iac-decommission/dev/**.json'
+      - '.github/workflows/iac-decommission-dev-apply.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iac-dev-apply
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      tombstones: ${{ steps.changed.outputs.tombstones }}
+      count: ${{ steps.changed.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Discover newly merged immutable DEV tombstones
+        id: changed
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import subprocess
+
+          before, after = os.environ['BEFORE_SHA'], os.environ['AFTER_SHA']
+          if not before or set(before) == {'0'}:
+              rows = subprocess.check_output(
+                  ['git', 'show', '--pretty=', '--name-status', after], text=True
+              ).splitlines()
+          else:
+              rows = subprocess.check_output(
+                  ['git', 'diff', '--name-status', before, after], text=True
+              ).splitlines()
+          tombstones = []
+          for row in rows:
+              parts = row.split('\t')
+              status, path = parts[0], parts[-1]
+              if path.startswith('enterprise-cicd/iac-decommission/dev/') and path.endswith('.json'):
+                  if status != 'A':
+                      raise SystemExit(f'decommission tombstones are append-only: status={status} path={path}')
+                  tombstones.append(path)
+          print('tombstones=' + json.dumps(sorted(tombstones), separators=(',', ':')))
+          print('count=' + str(len(tombstones)))
+          PY
+
+  binding-gate:
+    needs: discover
+    if: ${{ needs.discover.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    outputs:
+      client_id: ${{ steps.binding.outputs.client_id }}
+      tenant_id: ${{ steps.binding.outputs.tenant_id }}
+      subscription_id: ${{ steps.binding.outputs.subscription_id }}
+      state_rg: ${{ steps.binding.outputs.state_rg }}
+      state_storage: ${{ steps.binding.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require activated dedicated DEV Apply identity
+        id: binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINDING=enterprise-cicd/contracts/iac-runtime-bindings.json
+          test "$(jq -r '.environments.dev.activationStatus' "$BINDING")" = ready
+          test "$(jq -r '.environments.dev.apply.githubEnvironment' "$BINDING")" = iac-dev-apply
+          test "$(jq -r '.environments.dev.apply.stateWriteAccess' "$BINDING")" = true
+          test "$(jq -r '.environments.dev.apply.stateDataRole' "$BINDING")" = 'Storage Blob Data Contributor'
+          test "$(jq -r '.environments.dev.apply.stateScope' "$BINDING")" = container
+          test "$(jq -r '.environments.dev.apply.genericContributor' "$BINDING")" = false
+          test "$(jq -r '.environments.dev.apply.roleAssignmentWrite' "$BINDING")" = false
+          test "$(jq -r '.state.sharedKeyAccess' "$BINDING")" = false
+          echo "client_id=$(jq -r '.environments.dev.apply.clientId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "tenant_id=$(jq -r '.environments.dev.apply.tenantId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "subscription_id=$(jq -r '.environments.dev.apply.subscriptionId' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "state_rg=$(jq -r '.state.resourceGroup' "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "state_storage=$(jq -r '.state.storageAccount' "$BINDING")" >> "$GITHUB_OUTPUT"
+
+  protected-decommission:
+    needs: [discover, binding-gate]
+    if: ${{ needs.discover.outputs.count != '0' }}
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        tombstone: ${{ fromJSON(needs.discover.outputs.tombstones) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: iac-dev-apply
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ needs.binding-gate.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.binding-gate.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.binding-gate.outputs.subscription_id }}
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+      TFSTATE_RESOURCE_GROUP: ${{ needs.binding-gate.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.binding-gate.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate immutable tombstone and resolve original request
+        id: decom
+        shell: bash
+        env:
+          TOMBSTONE: ${{ matrix.tombstone }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-decommission-apply
+          python enterprise-cicd/iac-decommission/validate_decommission.py \
+            --tombstone "$TOMBSTONE" \
+            --original-output /tmp/iac-decommission-apply/original-request.json \
+            --metadata-output /tmp/iac-decommission-apply/metadata.json
+          echo "service=$(jq -r '.service' /tmp/iac-decommission-apply/metadata.json)" >> "$GITHUB_OUTPUT"
+          echo "request_name=$(jq -r '.requestName' /tmp/iac-decommission-apply/metadata.json)" >> "$GITHUB_OUTPUT"
+          echo "stack=$(jq -r '.rootStack' /tmp/iac-decommission-apply/metadata.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login using dedicated IaC Apply OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.binding-gate.outputs.client_id }}
+          tenant-id: ${{ needs.binding-gate.outputs.tenant_id }}
+          subscription-id: ${{ needs.binding-gate.outputs.subscription_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Render retired request and Entra-only remote backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request /tmp/iac-decommission-apply/original-request.json \
+            --output /tmp/iac-decommission-apply/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog \
+            --environment dev \
+            --service '${{ steps.decom.outputs.service }}' \
+            --request '${{ steps.decom.outputs.request_name }}' \
+            --auth oidc \
+            --output /tmp/iac-decommission-apply/backend.hcl
+
+      - name: Initialize state and re-check exclusive resource-group ownership
+        shell: bash
+        env:
+          STACK: ${{ steps.decom.outputs.stack }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init -reconfigure -input=false \
+            -backend-config=/tmp/iac-decommission-apply/backend.hcl
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" show -json > /tmp/iac-decommission-apply/current-state.json
+          RG="$(jq -r '.resource_group_name' /tmp/iac-decommission-apply/request.tfvars.json)"
+          az group show --name "$RG" -o json > /tmp/iac-decommission-apply/resource-group.json
+          az resource list --resource-group "$RG" -o json > /tmp/iac-decommission-apply/azure-resources.json
+          python - <<'PY' | tee /tmp/iac-decommission-apply/ownership-summary.json
+          import json
+          metadata = json.load(open('/tmp/iac-decommission-apply/metadata.json'))
+          state = json.load(open('/tmp/iac-decommission-apply/current-state.json'))
+          rg = json.load(open('/tmp/iac-decommission-apply/resource-group.json'))
+          azure = json.load(open('/tmp/iac-decommission-apply/azure-resources.json'))
+          ids = set()
+          def walk(module):
+              for resource in module.get('resources', []):
+                  value = (resource.get('values') or {}).get('id')
+                  if value:
+                      ids.add(value.lower())
+              for child in module.get('child_modules', []):
+                  walk(child)
+          walk(((state.get('values') or {}).get('root_module') or {}))
+          foreign = sorted(
+              item['id'] for item in azure
+              if item.get('id') and item['id'].lower() not in ids
+          )
+          if (rg.get('tags') or {}).get('iac_request') != metadata['requestName']:
+              raise SystemExit('resource-group ownership tag no longer matches the tombstone request')
+          if foreign:
+              raise SystemExit(f'foreign Azure resources block decommission Apply: {foreign}')
+          print(json.dumps({
+              'request': metadata['requestName'],
+              'resourceGroup': rg['name'],
+              'foreignResources': [],
+              'exclusiveOwnershipRevalidated': True
+          }, indent=2))
+          PY
+
+      - name: Merge-time destroy-only re-plan with state lock
+        shell: bash
+        env:
+          STACK: ${{ steps.decom.outputs.stack }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" plan \
+            -destroy \
+            -lock=true \
+            -lock-timeout=5m \
+            -input=false \
+            -var-file=/tmp/iac-decommission-apply/request.tfvars.json \
+            -out=/tmp/iac-decommission-apply/destroy.tfplan
+          terraform -chdir="$STACK" show -json /tmp/iac-decommission-apply/destroy.tfplan \
+            > /tmp/iac-decommission-apply/plan.json
+
+      - name: Require exact non-empty delete-only saved plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee /tmp/iac-decommission-apply/plan-summary.json
+          import json
+          metadata = json.load(open('/tmp/iac-decommission-apply/metadata.json'))
+          plan = json.load(open('/tmp/iac-decommission-apply/plan.json'))
+          changes = []
+          for rc in plan.get('resource_changes', []):
+              actions = rc.get('change', {}).get('actions', [])
+              if actions != ['no-op']:
+                  changes.append({'address': rc.get('address'), 'actions': actions})
+          if not changes:
+              raise SystemExit('decommission state is already empty; refusing stale Apply')
+          invalid = [x for x in changes if x['actions'] != ['delete']]
+          if invalid:
+              raise SystemExit(f'decommission Apply must remain delete-only: {invalid}')
+          print(json.dumps({
+              'request': metadata['requestName'],
+              'changeTicket': metadata['changeTicket'],
+              'changes': changes,
+              'destroyOnly': True,
+              'exactSavedPlanRequired': True,
+              'authorizedByImmutableTombstone': True,
+              'status': 'approved-for-exact-saved-destroy-plan'
+          }, indent=2))
+          PY
+
+      - name: Apply exact merge-time saved destroy plan
+        shell: bash
+        env:
+          STACK: ${{ steps.decom.outputs.stack }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" apply \
+            -input=false \
+            -auto-approve \
+            /tmp/iac-decommission-apply/destroy.tfplan
+
+      - name: Verify remote state empty and Azure resource group absent
+        shell: bash
+        env:
+          STACK: ${{ steps.decom.outputs.stack }}
+        run: |
+          set -euo pipefail
+          RG="$(jq -r '.resource_group_name' /tmp/iac-decommission-apply/request.tfvars.json)"
+          terraform -chdir="$STACK" state list > /tmp/iac-decommission-apply/state-list.txt
+          if [ -s /tmp/iac-decommission-apply/state-list.txt ]; then
+            echo 'Terraform state is not empty after governed decommission:' >&2
+            cat /tmp/iac-decommission-apply/state-list.txt >&2
+            exit 1
+          fi
+          EXISTS="$(az group exists --name "$RG" -o tsv)"
+          test "$EXISTS" = false || { echo "resource group still exists after decommission: $RG" >&2; exit 1; }
+          python - <<'PY' | tee /tmp/iac-decommission-apply/verification-summary.json
+          import json
+          metadata = json.load(open('/tmp/iac-decommission-apply/metadata.json'))
+          tfvars = json.load(open('/tmp/iac-decommission-apply/request.tfvars.json'))
+          print(json.dumps({
+              'status': 'passed',
+              'request': metadata['requestName'],
+              'service': metadata['service'],
+              'changeTicket': metadata['changeTicket'],
+              'resourceGroup': tfvars['resource_group_name'],
+              'remoteStateEmpty': True,
+              'resourceGroupAbsent': True,
+              'exactSavedDestroyPlanApplied': True,
+              'auditTombstoneRetained': True
+          }, indent=2))
+          PY
+
+      - name: Publish governed Decommission evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-dev-decommission-apply-${{ steps.decom.outputs.request_name }}
+          path: /tmp/iac-decommission-apply
+          if-no-files-found: error
+          retention-days: 365
+
+  decommission-gate:
+    if: ${{ always() }}
+    needs: [discover, binding-gate, protected-decommission]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful governed decommission for merged tombstones
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ needs.discover.outputs.count }}' = '0' ]; then
+            echo 'No newly merged DEV decommission tombstone requires Apply.'
+            exit 0
+          fi
+          test '${{ needs.binding-gate.result }}' = success
+          test '${{ needs.protected-decommission.result }}' = success

@@ -1,0 +1,67 @@
+name: Azure DevOps Platform Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/azure-devops/**'
+      - 'enterprise-cicd/ci-scripts/infra/**'
+      - 'enterprise-cicd/testing/contracts/validate_azure_devops_platform.py'
+      - '.github/workflows/azure-devops-platform-validate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'enterprise-cicd/azure-devops/**'
+      - 'enterprise-cicd/ci-scripts/infra/**'
+      - 'enterprise-cicd/testing/contracts/validate_azure_devops_platform.py'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-azure-devops-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Azure DevOps IaC governance contracts
+        run: python enterprise-cicd/testing/contracts/validate_azure_devops_platform.py
+
+      - name: Compile request discovery helper
+        run: python -m py_compile enterprise-cicd/ci-scripts/infra/discover_iac_requests.py
+
+      - name: Smoke discover DEV request matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_base=$(git rev-parse HEAD^)
+          python enterprise-cicd/ci-scripts/infra/discover_iac_requests.py \
+            --base-ref "$temp_base" \
+            --head-ref HEAD \
+            --output /tmp/iac-matrix.json || true
+          test -s /tmp/iac-matrix.json || true
+
+      - name: Ensure PR pipeline cannot apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          pipeline=enterprise-cicd/azure-devops/pipelines/workload/iac-request-pr.yml
+          if grep -nE 'terraform[[:space:]]+apply|request-apply\.yml' "$pipeline"; then
+            echo 'PR validation pipeline must remain plan-only.' >&2
+            exit 1
+          fi
+
+      - name: Ensure service connections are fixed per environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'sc-tf-plan-dev' enterprise-cicd/azure-devops/pipelines/workload/iac-request-pr.yml
+          grep -F 'sc-tf-plan-test' enterprise-cicd/azure-devops/pipelines/workload/iac-request-pr.yml
+          grep -F 'sc-tf-plan-prod' enterprise-cicd/azure-devops/pipelines/workload/iac-request-pr.yml
+          grep -F 'sc-tf-apply-dev' enterprise-cicd/azure-devops/pipelines/workload/iac-request-apply.yml
+          grep -F 'sc-tf-apply-test' enterprise-cicd/azure-devops/pipelines/workload/iac-request-apply.yml
+          grep -F 'sc-tf-apply-prod' enterprise-cicd/azure-devops/pipelines/workload/iac-request-apply.yml

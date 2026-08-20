@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Network Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["addressSpace", "subnetName", "subnetPrefix"],
+  "properties": {
+    "addressSpace": {
+      "type": "string",
+      "pattern": "^[0-9.]+/[0-9]{1,2}$"
+    },
+    "subnetName": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+    },
+    "subnetPrefix": {
+      "type": "string",
+      "pattern": "^[0-9.]+/[0-9]{1,2}$"
+    }
+  }
+}

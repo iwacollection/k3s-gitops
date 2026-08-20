@@ -1,0 +1,93 @@
+name: IaC DEV Retirement Guard
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/iac-requests/dev/**.json'
+      - 'enterprise-cicd/iac-decommission/dev/**.json'
+      - 'enterprise-cicd/iac-decommission/validate_decommission.py'
+      - '.github/workflows/iac-dev-retirement-guard.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Enforce immutable retirement audit contract
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          base = os.environ['BASE_SHA']
+          rows = subprocess.check_output(
+              ['git', 'diff', '--name-status', f'{base}...HEAD'], text=True
+          ).splitlines()
+
+          changes = []
+          for row in rows:
+              parts = row.split('\t')
+              status = parts[0]
+              path = parts[-1]
+              changes.append((status, path))
+
+          tombstone_prefix = 'enterprise-cicd/iac-decommission/dev/'
+          request_prefix = 'enterprise-cicd/iac-requests/dev/'
+
+          changed_tombstones = [
+              (status, path) for status, path in changes
+              if path.startswith(tombstone_prefix) and path.endswith('.json')
+          ]
+          for status, path in changed_tombstones:
+              if status != 'A':
+                  raise SystemExit(
+                      f'decommission tombstones are append-only and immutable: status={status} path={path}'
+                  )
+              subprocess.run([
+                  'python', 'enterprise-cicd/iac-decommission/validate_decommission.py',
+                  '--tombstone', path,
+              ], check=True)
+
+          retired = {}
+          root = Path('enterprise-cicd/iac-decommission/dev')
+          if root.is_dir():
+              for tombstone in sorted(root.glob('*.json')):
+                  data = json.loads(tombstone.read_text())
+                  request_path = (data.get('spec') or {}).get('requestPath')
+                  if not request_path:
+                      raise SystemExit(f'invalid tombstone missing requestPath: {tombstone}')
+                  if request_path in retired:
+                      raise SystemExit(
+                          f'duplicate tombstone requestPath={request_path}: {retired[request_path]}, {tombstone}'
+                      )
+                  retired[request_path] = str(tombstone)
+
+          for status, path in changes:
+              if not (path.startswith(request_prefix) and path.endswith('.json')):
+                  continue
+              if path.endswith('.example.json'):
+                  continue
+              if status == 'D':
+                  raise SystemExit(
+                      f'InfrastructureRequest deletion is forbidden; retain the source request and add a tombstone: {path}'
+                  )
+              if path in retired:
+                  raise SystemExit(
+                      f'retired InfrastructureRequest is immutable: request={path} tombstone={retired[path]}'
+                  )
+
+          print(f'IaC retirement guard valid; added_tombstones={len(changed_tombstones)} retired_requests={len(retired)}')
+          PY

@@ -1,0 +1,76 @@
+name: Build Profile Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/build-images/**'
+      - 'enterprise-cicd/ci-catalog/**'
+      - 'enterprise-cicd/testing/fixtures/build-profiles/**'
+      - '.github/workflows/build-profile-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: java
+            profile: java/springboot-maven-v1
+            image: java21-maven-v1
+            context: enterprise-cicd/build-images/java
+            fixture: enterprise-cicd/testing/fixtures/build-profiles/java
+          - name: python
+            profile: python/python-uv-v1
+            image: python-uv-v1
+            context: enterprise-cicd/build-images/python
+            fixture: enterprise-cicd/testing/fixtures/build-profiles/python
+          - name: go
+            profile: go/go-service-v1
+            image: go-builder-v1
+            context: enterprise-cicd/build-images/go
+            fixture: enterprise-cicd/testing/fixtures/build-profiles/go
+          - name: cpp
+            profile: cpp/cmake-conan-v1
+            image: cpp-cmake-conan-v1
+            context: enterprise-cicd/build-images/cpp
+            fixture: enterprise-cicd/testing/fixtures/build-profiles/cpp
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build platform image locally
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          CONTEXT: ${{ matrix.context }}
+        run: |
+          set -euo pipefail
+          docker build --pull -t "platform-fixture/$IMAGE:test" "$CONTEXT"
+
+      - name: Execute golden profile lifecycle
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          PROFILE: ${{ matrix.profile }}
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          set -euo pipefail
+          PROFILE_JSON="enterprise-cicd/ci-catalog/$PROFILE/profile.json"
+          PREPARE=$(jq -r '.spec.commands.prepare' "$PROFILE_JSON")
+          VERIFY=$(jq -r '.spec.commands.verify' "$PROFILE_JSON")
+          PACKAGE=$(jq -r '.spec.commands.package' "$PROFILE_JSON")
+          CACHE="$RUNNER_TEMP/platform-cache-${{ matrix.name }}"
+          mkdir -p "$CACHE"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE/$FIXTURE:/workspace" \
+            -v "$CACHE:/platform-cache" \
+            -w /workspace \
+            "platform-fixture/$IMAGE:test" \
+            sh -c "$PREPARE && $VERIFY && $PACKAGE"

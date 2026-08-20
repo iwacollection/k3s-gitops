@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VPN Gateway Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["addressSpace", "gatewaySubnetPrefix", "sku", "bgpEnabled"],
+  "properties": {
+    "addressSpace": {"type": "string", "pattern": "^[0-9.]+/[0-9]{1,2}$"},
+    "gatewaySubnetPrefix": {"type": "string", "pattern": "^[0-9.]+/[0-9]{1,2}$"},
+    "sku": {"type": "string", "enum": ["VpnGw1", "VpnGw2"]},
+    "bgpEnabled": {"type": "boolean"}
+  }
+}

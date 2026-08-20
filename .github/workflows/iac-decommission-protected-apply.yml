@@ -1,0 +1,261 @@
+name: IaC Protected Decommission Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      tombstone_path:
+        description: Committed DecommissionRequest path
+        required: true
+        type: string
+      confirm_destroy:
+        description: Explicit confirmation for protected destructive Apply
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      service: ${{ steps.resolve.outputs.service }}
+      capability: ${{ steps.resolve.outputs.capability }}
+      request_name: ${{ steps.resolve.outputs.request_name }}
+      stack: ${{ steps.resolve.outputs.stack }}
+      client_id: ${{ steps.resolve.outputs.client_id }}
+      tenant_id: ${{ steps.resolve.outputs.tenant_id }}
+      subscription_id: ${{ steps.resolve.outputs.subscription_id }}
+      github_environment: ${{ steps.resolve.outputs.github_environment }}
+      state_rg: ${{ steps.resolve.outputs.state_rg }}
+      state_storage: ${{ steps.resolve.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate immutable tombstone and resolve destructive capability plane
+        id: resolve
+        env:
+          TOMBSTONE: ${{ inputs.tombstone_path }}
+          CONFIRM_DESTROY: ${{ inputs.confirm_destroy }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRM_DESTROY" = true || { echo 'confirm_destroy=true is required' >&2; exit 1; }
+          mkdir -p /tmp/iac-protected-decommission-apply
+          python enterprise-cicd/iac-decommission/validate_decommission.py \
+            --tombstone "$TOMBSTONE" \
+            --original-output /tmp/iac-protected-decommission-apply/original-request.json \
+            --metadata-output /tmp/iac-protected-decommission-apply/metadata.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          meta=json.load(open('/tmp/iac-protected-decommission-apply/metadata.json'))
+          env=meta['environment']; service=meta['service']
+          if env == 'dev' and service in {'managed-identity','network'}:
+              raise SystemExit('DEV standard decommission is owned by the existing merge-triggered DEV decommission workflow')
+          if service in {'load-balancer','vpn-gateway'}:
+              capability='edge'; github_env=f'iac-{env}-edge-apply'
+          elif service == 'iam-role-binding':
+              capability='iam'; github_env=f'iac-{env}-iam-apply'
+          else:
+              capability='apply'; github_env=f'iac-{env}-apply'
+          binding=json.loads(Path('enterprise-cicd/contracts/iac-runtime-bindings.json').read_text())
+          runtime=binding['environments'][env]
+          if runtime.get('activationStatus') != 'ready':
+              raise SystemExit(f'{env} IaC runtime is not activated')
+          plane=runtime.get(capability) or {}
+          if plane.get('activationStatus','ready' if capability=='apply' else None) != 'ready':
+              raise SystemExit(f'{env}/{capability} destructive capability is not activated')
+          if plane.get('githubEnvironment') != github_env:
+              raise SystemExit(f'{env}/{capability} GitHub Environment mismatch')
+          if plane.get('stateDataRole') != 'Storage Blob Data Contributor' or plane.get('stateScope') != 'container':
+              raise SystemExit('destructive runtime state role must remain container-scoped Blob Data Contributor')
+          client_id=plane.get('clientId')
+          if not client_id:
+              raise SystemExit(f'{env}/{capability} binding has no real clientId')
+          if capability == 'apply':
+              if plane.get('genericContributor') is not False or plane.get('roleAssignmentWrite') is not False:
+                  raise SystemExit('standard Apply privilege guard failed')
+              if service == 'network' and runtime.get('networkFoundation',{}).get('activationStatus') != 'ready':
+                  raise SystemExit('network foundation capability is not activated')
+          if capability == 'edge':
+              for key in ('genericNetworkContributor','peeringWrite','natGatewayWrite','applicationGatewayWrite','vpnConnectionWrite','roleAssignmentWrite'):
+                  if plane.get(key) is not False:
+                      raise SystemExit(f'Edge privilege guard failed: {key}')
+          if capability == 'iam':
+              if plane.get('delegation') != 'conditioned-rbac-administrator':
+                  raise SystemExit('IAM destructive runtime must use conditioned delegation')
+              if plane.get('arbitraryRoleAssignmentAllowed') is not False:
+                  raise SystemExit('IAM arbitrary role assignment capability is forbidden')
+          state=binding['state']; azure=binding['azure']
+          if state.get('authentication') != 'MicrosoftEntraID' or state.get('sharedKeyAccess') is not False:
+              raise SystemExit('state backend must remain Entra-only')
+          for k,v in {
+            'environment':env,'service':service,'capability':capability,'request_name':meta['requestName'],
+            'stack':meta['rootStack'],'client_id':client_id,'tenant_id':azure['tenantId'],
+            'subscription_id':azure['subscriptionId'],'github_environment':github_env,
+            'state_rg':state['resourceGroup'],'state_storage':state['storageAccount']
+          }.items(): print(f'{k}={v}')
+          PY
+
+  exact-destroy:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: ${{ needs.resolve.outputs.github_environment }}
+    concurrency:
+      group: iac-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.capability }}-destroy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ needs.resolve.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.resolve.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.resolve.outputs.subscription_id }}
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+      TFSTATE_RESOURCE_GROUP: ${{ needs.resolve.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.resolve.outputs.state_storage }}
+      TARGET_ENV: ${{ needs.resolve.outputs.environment }}
+      SERVICE: ${{ needs.resolve.outputs.service }}
+      STACK: ${{ needs.resolve.outputs.stack }}
+      REQUEST_NAME: ${{ needs.resolve.outputs.request_name }}
+      TOMBSTONE: ${{ inputs.tombstone_path }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login using destructive capability OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.resolve.outputs.client_id }}
+          tenant-id: ${{ needs.resolve.outputs.tenant_id }}
+          subscription-id: ${{ needs.resolve.outputs.subscription_id }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Revalidate tombstone and render original request/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-protected-decommission-apply
+          python enterprise-cicd/iac-decommission/validate_decommission.py \
+            --tombstone "$TOMBSTONE" \
+            --original-output /tmp/iac-protected-decommission-apply/original-request.json \
+            --metadata-output /tmp/iac-protected-decommission-apply/metadata.json
+          python enterprise-cicd/iac-catalog/render_request.py \
+            --request /tmp/iac-protected-decommission-apply/original-request.json \
+            --output /tmp/iac-protected-decommission-apply/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog --environment "$TARGET_ENV" --service "$SERVICE" --request "$REQUEST_NAME" --auth oidc \
+            --output /tmp/iac-protected-decommission-apply/backend.hcl
+
+      - name: Initialize state and revalidate ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init -reconfigure -input=false -backend-config=/tmp/iac-protected-decommission-apply/backend.hcl
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" show -json > /tmp/iac-protected-decommission-apply/current-state.json
+          if [ "$SERVICE" = iam-role-binding ]; then
+            python - <<'PY' | tee /tmp/iac-protected-decommission-apply/ownership-summary.json
+          import json
+          state=json.load(open('/tmp/iac-protected-decommission-apply/current-state.json'))
+          resources=[]
+          def walk(m):
+              resources.extend(m.get('resources',[]))
+              for c in m.get('child_modules',[]): walk(c)
+          walk(((state.get('values') or {}).get('root_module') or {}))
+          if not resources: raise SystemExit('IAM state is empty/stale')
+          bad=[r.get('type') for r in resources if r.get('type') != 'azurerm_role_assignment']
+          if bad: raise SystemExit(f'IAM state contains non-role-assignment resources: {bad}')
+          ids=[(r.get('values') or {}).get('id') for r in resources if (r.get('values') or {}).get('id')]
+          json.dump(ids,open('/tmp/iac-protected-decommission-apply/iam-assignment-ids.json','w'))
+          print(json.dumps({'ownershipMode':'terraform-role-assignment-state','assignmentIds':len(ids),'safeForDestroy':True},indent=2))
+          PY
+          else
+            RG="$(jq -r '.resource_group_name' /tmp/iac-protected-decommission-apply/request.tfvars.json)"
+            az group show -n "$RG" -o json > /tmp/iac-protected-decommission-apply/resource-group.json
+            az resource list -g "$RG" -o json > /tmp/iac-protected-decommission-apply/azure-resources.json
+            python - <<'PY' | tee /tmp/iac-protected-decommission-apply/ownership-summary.json
+          import json
+          meta=json.load(open('/tmp/iac-protected-decommission-apply/metadata.json'))
+          state=json.load(open('/tmp/iac-protected-decommission-apply/current-state.json'))
+          rg=json.load(open('/tmp/iac-protected-decommission-apply/resource-group.json'))
+          azure=json.load(open('/tmp/iac-protected-decommission-apply/azure-resources.json'))
+          ids=set()
+          def walk(m):
+              for r in m.get('resources',[]):
+                  rid=(r.get('values') or {}).get('id')
+                  if rid: ids.add(rid.lower())
+              for c in m.get('child_modules',[]): walk(c)
+          walk(((state.get('values') or {}).get('root_module') or {}))
+          if (rg.get('tags') or {}).get('iac_request') != meta['requestName']:
+              raise SystemExit('resource-group ownership tag mismatch')
+          foreign=sorted(x['id'] for x in azure if x.get('id') and x['id'].lower() not in ids)
+          if foreign: raise SystemExit(f'foreign Azure resources block protected decommission: {foreign}')
+          print(json.dumps({'ownershipMode':'exclusive-resource-group','resourceGroup':rg['name'],'foreignResources':[],'safeForDestroy':True},indent=2))
+          PY
+          fi
+
+      - name: Re-plan exact delete-only state-locked destroy
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" plan -destroy -lock=true -lock-timeout=5m -input=false \
+            -var-file=/tmp/iac-protected-decommission-apply/request.tfvars.json \
+            -out=/tmp/iac-protected-decommission-apply/destroy.tfplan
+          terraform -chdir="$STACK" show -json /tmp/iac-protected-decommission-apply/destroy.tfplan > /tmp/iac-protected-decommission-apply/plan.json
+          python - <<'PY' | tee /tmp/iac-protected-decommission-apply/plan-summary.json
+          import json
+          plan=json.load(open('/tmp/iac-protected-decommission-apply/plan.json'))
+          changes=[]
+          for rc in plan.get('resource_changes',[]):
+              actions=rc.get('change',{}).get('actions',[])
+              if actions != ['no-op']: changes.append({'address':rc.get('address'),'actions':actions})
+          if not changes: raise SystemExit('protected destroy is stale: no resources remain')
+          bad=[x for x in changes if x['actions'] != ['delete']]
+          if bad: raise SystemExit(f'destroy plan must be delete-only: {bad}')
+          print(json.dumps({'request':'${{ needs.resolve.outputs.request_name }}','service':'${{ needs.resolve.outputs.service }}','changes':changes,'destroyOnly':True,'exactSavedDestroyPlan':True,'status':'approved-for-exact-destroy'},indent=2))
+          PY
+
+      - name: Apply exact saved destroy plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" apply -input=false -auto-approve /tmp/iac-protected-decommission-apply/destroy.tfplan
+          terraform -chdir="$STACK" state list > /tmp/iac-protected-decommission-apply/state-after.txt
+          test ! -s /tmp/iac-protected-decommission-apply/state-after.txt || { echo 'Terraform state is not empty after protected decommission' >&2; cat /tmp/iac-protected-decommission-apply/state-after.txt; exit 1; }
+
+      - name: Verify Azure absence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$SERVICE" = iam-role-binding ]; then
+            python - <<'PY' | tee /tmp/iac-protected-decommission-apply/verification-summary.json
+          import json, subprocess
+          ids=json.load(open('/tmp/iac-protected-decommission-apply/iam-assignment-ids.json'))
+          survivors=[]
+          for rid in ids:
+              p=subprocess.run(['az','rest','--method','get','--url',f'https://management.azure.com{rid}?api-version=2022-04-01'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+              if p.returncode == 0: survivors.append(rid)
+          if survivors: raise SystemExit(f'role assignments still exist after decommission: {survivors}')
+          print(json.dumps({'status':'passed','service':'iam-role-binding','roleAssignmentsRemoved':len(ids),'terraformStateEmpty':True},indent=2))
+          PY
+          else
+            RG="$(jq -r '.resource_group_name' /tmp/iac-protected-decommission-apply/request.tfvars.json)"
+            EXISTS="$(az group exists -n "$RG")"
+            test "$EXISTS" = false || { echo "resource group still exists after decommission: $RG" >&2; exit 1; }
+            printf '{"status":"passed","service":"%s","resourceGroup":"%s","resourceGroupExists":false,"terraformStateEmpty":true}\n' "$SERVICE" "$RG" | tee /tmp/iac-protected-decommission-apply/verification-summary.json
+          fi
+
+      - name: Publish protected decommission audit evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.capability }}-decommission-${{ needs.resolve.outputs.request_name }}
+          path: /tmp/iac-protected-decommission-apply
+          if-no-files-found: error
+          retention-days: 365

@@ -1,0 +1,6 @@
+{
+  "sku": "Standard",
+  "adminEnabled": false,
+  "publicNetworkAccess": "Enabled",
+  "retentionDays": 30
+}

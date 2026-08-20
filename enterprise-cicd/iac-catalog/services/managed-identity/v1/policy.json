@@ -1,0 +1,3 @@
+{
+  "dev":{"enabled":true,"requiresApproval":false},"test":{"enabled":true,"requiresApproval":false},"prod":{"enabled":true,"requiresApproval":true}
+}

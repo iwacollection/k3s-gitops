@@ -1,0 +1,14 @@
+{
+  "service": "vpn-gateway",
+  "version": "v1",
+  "owner": "platform-sre",
+  "terraformModule": "enterprise-cicd/terraform/modules/vpn-gateway",
+  "rootStack": "enterprise-cicd/terraform/stacks/workloads/vpn-gateway",
+  "requestSchema": "request.schema.json",
+  "defaults": "defaults.json",
+  "policy": "policy.json",
+  "lifecycle": "active",
+  "riskClass": "network-edge",
+  "billingImpact": "billable",
+  "applyMode": "protected-edge-oidc"
+}

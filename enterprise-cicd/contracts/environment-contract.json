@@ -1,0 +1,50 @@
+{
+  "version": "v1",
+  "target_model": "azure-enterprise",
+  "promotion_order": ["dev", "test", "prod"],
+  "environments": {
+    "dev": {
+      "classification": "nonprod",
+      "subscription_boundary": "dedicated-in-production",
+      "azure_devops_environment": "dev",
+      "github_environment": "dev",
+      "terraform_scope": "workload/dev",
+      "gitops_path": "clusters/dev",
+      "production_approval_required": false,
+      "exclusive_lock_required": true
+    },
+    "test": {
+      "classification": "nonprod",
+      "subscription_boundary": "dedicated-in-production",
+      "azure_devops_environment": "test",
+      "github_environment": "test",
+      "terraform_scope": "workload/test",
+      "gitops_path": "clusters/test",
+      "production_approval_required": false,
+      "exclusive_lock_required": true
+    },
+    "prod": {
+      "classification": "production",
+      "subscription_boundary": "dedicated",
+      "azure_devops_environment": "prod",
+      "github_environment": "prod",
+      "terraform_scope": "workload/prod",
+      "gitops_path": "clusters/prod",
+      "production_approval_required": true,
+      "exclusive_lock_required": true,
+      "branch_control": ["main"],
+      "required_template_check": true
+    }
+  },
+  "lab_mapping": {
+    "single_subscription": true,
+    "subscription_id_source": "AZURE_SUBSCRIPTION_ID",
+    "physical_environments_created": ["dev"],
+    "logical_only_environments": ["test", "prod"],
+    "existing_dev_aks": {
+      "resource_group": "group-test",
+      "cluster_name": "k8s-test-cicd"
+    },
+    "rule": "lab physical boundaries may be reduced; logical environment boundaries must remain independent"
+  }
+}

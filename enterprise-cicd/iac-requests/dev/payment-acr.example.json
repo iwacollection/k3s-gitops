@@ -1,0 +1,22 @@
+{
+  "apiVersion": "platform.iac/v1",
+  "kind": "InfrastructureRequest",
+  "metadata": {
+    "name": "payment-acr",
+    "owner": "payment-team",
+    "application": "payment",
+    "costCenter": "platform-lab"
+  },
+  "spec": {
+    "environment": "dev",
+    "region": "eastus",
+    "service": "acr",
+    "templateVersion": "v1",
+    "parameters": {
+      "sku": "Standard",
+      "adminEnabled": false,
+      "publicNetworkAccess": "Enabled",
+      "retentionDays": 30
+    }
+  }
+}

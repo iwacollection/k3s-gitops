@@ -1,0 +1,127 @@
+name: Framework Structure Validate
+
+on:
+  pull_request:
+    paths:
+      - 'enterprise-cicd/**'
+      - '.github/workflows/framework-structure-validate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'enterprise-cicd/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-structure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required enterprise framework boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required=(
+            enterprise-cicd/architecture
+            enterprise-cicd/contracts
+            enterprise-cicd/iac-catalog
+            enterprise-cicd/iac-catalog/services/_template
+            enterprise-cicd/iac-catalog/services/acr/v1
+            enterprise-cicd/iac-requests/dev
+            enterprise-cicd/iac-requests/test
+            enterprise-cicd/iac-requests/prod
+            enterprise-cicd/ci-catalog/java/springboot-maven-v1
+            enterprise-cicd/ci-catalog/python/python-uv-v1
+            enterprise-cicd/ci-catalog/go/go-service-v1
+            enterprise-cicd/ci-catalog/cpp/cmake-conan-v1
+            enterprise-cicd/application-definitions
+            enterprise-cicd/release-catalog/rolling/rolling-v1
+            enterprise-cicd/release-catalog/canary/canary-v1
+            enterprise-cicd/release-catalog/blue-green/blue-green-v1
+            enterprise-cicd/release-requests
+            enterprise-cicd/promotion/policies
+            enterprise-cicd/promotion/verification
+            enterprise-cicd/promotion/rollback
+            enterprise-cicd/terraform/bootstrap
+            enterprise-cicd/terraform/state
+            enterprise-cicd/terraform/modules/resource-group
+            enterprise-cicd/terraform/modules/managed-identity
+            enterprise-cicd/terraform/modules/acr
+            enterprise-cicd/terraform/modules/network
+            enterprise-cicd/terraform/modules/aks
+            enterprise-cicd/terraform/modules/workload-base
+            enterprise-cicd/terraform/stacks/platform/governance
+            enterprise-cicd/terraform/stacks/platform/connectivity
+            enterprise-cicd/terraform/stacks/platform/identity
+            enterprise-cicd/terraform/stacks/platform/acr
+            enterprise-cicd/terraform/stacks/platform/aks
+            enterprise-cicd/terraform/stacks/workloads/dev
+            enterprise-cicd/terraform/stacks/workloads/test
+            enterprise-cicd/terraform/stacks/workloads/prod
+            enterprise-cicd/azure-devops/templates/terraform
+            enterprise-cicd/azure-devops/templates/application
+            enterprise-cicd/azure-devops/pipelines/platform
+            enterprise-cicd/azure-devops/pipelines/workload
+            enterprise-cicd/azure-devops/environments
+            enterprise-cicd/azure-devops/service-connections
+            enterprise-cicd/azure-devops/agent-pools
+            enterprise-cicd/github-actions/reusable
+            enterprise-cicd/github-actions/policies
+            enterprise-cicd/ci-scripts/common
+            enterprise-cicd/ci-scripts/go
+            enterprise-cicd/ci-scripts/python
+            enterprise-cicd/ci-scripts/java
+            enterprise-cicd/ci-scripts/cpp
+            enterprise-cicd/ci-scripts/infra
+            enterprise-cicd/build-images/base
+            enterprise-cicd/build-images/go
+            enterprise-cicd/build-images/python
+            enterprise-cicd/build-images/java
+            enterprise-cicd/build-images/cpp
+            enterprise-cicd/build-images/infra
+            enterprise-cicd/dependency-proxy/maven
+            enterprise-cicd/dependency-proxy/pypi
+            enterprise-cicd/dependency-proxy/go
+            enterprise-cicd/dependency-proxy/cpp
+            enterprise-cicd/artifacts/acr
+            enterprise-cicd/artifacts/packages
+            enterprise-cicd/artifacts/promotion
+            enterprise-cicd/gitops/clusters
+            enterprise-cicd/gitops/infrastructure
+            enterprise-cicd/gitops/apps
+            enterprise-cicd/gitops/environments/dev
+            enterprise-cicd/gitops/environments/test
+            enterprise-cicd/gitops/environments/prod
+            enterprise-cicd/security/policy
+            enterprise-cicd/security/scanning
+            enterprise-cicd/security/sbom-signing
+            enterprise-cicd/security/secrets
+            enterprise-cicd/security/rbac
+            enterprise-cicd/observability/pipeline
+            enterprise-cicd/observability/deployments
+            enterprise-cicd/observability/platform
+            enterprise-cicd/testing/contracts
+            enterprise-cicd/testing/integration
+            enterprise-cicd/testing/e2e
+            enterprise-cicd/operations/runbooks
+            enterprise-cicd/docs/adr
+            enterprise-cicd/docs/standards
+            enterprise-cicd/docs/onboarding
+          )
+
+          failed=0
+          for path in "${required[@]}"; do
+            if [[ ! -d "$path" ]]; then
+              echo "missing required boundary: $path" >&2
+              failed=1
+            fi
+          done
+
+          [[ "$failed" -eq 0 ]]
+          echo "Enterprise framework structure is complete."

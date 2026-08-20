@@ -1,0 +1,102 @@
+{
+  "version": 3,
+  "environments": {
+    "dev": {
+      "network": {
+        "resourceGroup": "rg-platform-network-dev",
+        "virtualNetwork": "vnet-platform-dev",
+        "privateEndpointSubnet": "snet-private-endpoints",
+        "postgresDelegatedSubnet": "snet-postgresql",
+        "dnsZones": {
+          "storage": "privatelink.blob.core.windows.net",
+          "key-vault": "privatelink.vaultcore.azure.net",
+          "service-bus": "privatelink.servicebus.windows.net",
+          "managed-redis": "privatelink.redis.azure.net",
+          "postgresql-flexible": "platform-dev.postgres.database.azure.com"
+        }
+      },
+      "observability": {
+        "resourceGroup": "rg-platform-observability-dev",
+        "logAnalyticsWorkspace": "law-platform-dev",
+        "azureMonitorWorkspace": "amw-platform-dev"
+      },
+      "identities": {
+        "githubOidc": {
+          "principalType": "UserAssignedManagedIdentity",
+          "clientId": "cfb1ddc1-fd3b-4709-b4b0-4cccebaa58ad",
+          "principalId": "03b8ba4a-9155-4e7b-add1-e4e1597df2c7",
+          "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+          "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+          "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/sub-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k8s-test-gruop-uami"
+        },
+        "postgresqlDba": {
+          "objectId": null,
+          "principalName": null,
+          "principalType": "Group"
+        }
+      }
+    },
+    "test": {
+      "network": {
+        "resourceGroup": "rg-platform-network-test",
+        "virtualNetwork": "vnet-platform-test",
+        "privateEndpointSubnet": "snet-private-endpoints",
+        "postgresDelegatedSubnet": "snet-postgresql",
+        "dnsZones": {
+          "storage": "privatelink.blob.core.windows.net",
+          "key-vault": "privatelink.vaultcore.azure.net",
+          "service-bus": "privatelink.servicebus.windows.net",
+          "managed-redis": "privatelink.redis.azure.net",
+          "postgresql-flexible": "platform-test.postgres.database.azure.com"
+        }
+      },
+      "observability": {
+        "resourceGroup": "rg-platform-observability-test",
+        "logAnalyticsWorkspace": "law-platform-test",
+        "azureMonitorWorkspace": "amw-platform-test"
+      },
+      "identities": {
+        "githubOidc": {
+          "principalType": "UserAssignedManagedIdentity",
+          "clientId": "f0a007c9-7e56-47bd-9b64-9e1c6b92b816",
+          "principalId": "ec01ea19-67ac-436f-ad28-73f568572769",
+          "tenantId": "a1c6a587-dc3b-40a5-9438-445d896bb5f2",
+          "subscriptionId": "c12c3a36-99d8-4741-bcef-cd7df5d5cd4a",
+          "resourceId": "/subscriptions/c12c3a36-99d8-4741-bcef-cd7df5d5cd4a/resourceGroups/sub-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/k3s-gitops-test-uami"
+        },
+        "postgresqlDba": {
+          "objectId": null,
+          "principalName": null,
+          "principalType": "Group"
+        }
+      }
+    },
+    "prod": {
+      "network": {
+        "resourceGroup": "rg-platform-network-prod",
+        "virtualNetwork": "vnet-platform-prod",
+        "privateEndpointSubnet": "snet-private-endpoints",
+        "postgresDelegatedSubnet": "snet-postgresql",
+        "dnsZones": {
+          "storage": "privatelink.blob.core.windows.net",
+          "key-vault": "privatelink.vaultcore.azure.net",
+          "service-bus": "privatelink.servicebus.windows.net",
+          "managed-redis": "privatelink.redis.azure.net",
+          "postgresql-flexible": "platform-prod.postgres.database.azure.com"
+        }
+      },
+      "observability": {
+        "resourceGroup": "rg-platform-observability-prod",
+        "logAnalyticsWorkspace": "law-platform-prod",
+        "azureMonitorWorkspace": "amw-platform-prod"
+      },
+      "identities": {
+        "postgresqlDba": {
+          "objectId": null,
+          "principalName": null,
+          "principalType": "Group"
+        }
+      }
+    }
+  }
+}

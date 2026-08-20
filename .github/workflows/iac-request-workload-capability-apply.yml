@@ -1,0 +1,282 @@
+name: IaC Workload Services Protected Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev, test, prod]
+      request_path:
+        description: Committed workload InfrastructureRequest path
+        required: true
+        type: string
+      confirm_billable:
+        description: Required because workload services can incur Azure charges
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      service: ${{ steps.resolve.outputs.service }}
+      request_name: ${{ steps.resolve.outputs.request_name }}
+      stack: ${{ steps.resolve.outputs.stack }}
+      client_id: ${{ steps.resolve.outputs.client_id }}
+      tenant_id: ${{ steps.resolve.outputs.tenant_id }}
+      subscription_id: ${{ steps.resolve.outputs.subscription_id }}
+      github_environment: ${{ steps.resolve.outputs.github_environment }}
+      state_rg: ${{ steps.resolve.outputs.state_rg }}
+      state_storage: ${{ steps.resolve.outputs.state_storage }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve fail-closed workload Apply binding
+        id: resolve
+        shell: bash
+        env:
+          TARGET_ENV: ${{ inputs.environment }}
+          REQUEST_PATH: ${{ inputs.request_path }}
+          CONFIRM_BILLABLE: ${{ inputs.confirm_billable }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path, PurePosixPath
+
+          env=os.environ['TARGET_ENV']
+          raw=os.environ['REQUEST_PATH'].strip()
+          confirmed=os.environ['CONFIRM_BILLABLE'].lower() == 'true'
+          supported={'acr','storage','key-vault','service-bus','managed-redis','postgresql-flexible'}
+          if env not in {'dev','test','prod'}:
+              raise SystemExit('unsupported environment')
+          if not confirmed:
+              raise SystemExit('workload services are billable; rerun with confirm_billable=true after reviewing the Terraform Plan')
+          if not raw or raw.startswith('/') or '..' in PurePosixPath(raw).parts:
+              raise SystemExit('unsafe request_path')
+          if not raw.startswith(f'enterprise-cicd/iac-requests/{env}/') or not raw.endswith('.json') or raw.endswith('.example.json'):
+              raise SystemExit(f'request_path must be a committed {env} InfrastructureRequest')
+          path=Path(raw)
+          if not path.is_file():
+              raise SystemExit(f'request missing at current ref: {raw}')
+          req=json.loads(path.read_text()); spec=req['spec']; meta=req['metadata']
+          if spec['environment'] != env:
+              raise SystemExit('request environment mismatch')
+          service=spec['service']
+          if service not in supported:
+              raise SystemExit(f'service={service} is not a workload Apply service; supported={sorted(supported)}')
+          version=spec['templateVersion']
+          catalog=json.loads(Path(f'enterprise-cicd/iac-catalog/services/{service}/{version}/catalog.json').read_text())
+          if catalog.get('lifecycle') != 'active':
+              raise SystemExit('catalog is not active')
+          if catalog.get('applyMode') != 'protected-workload-oidc':
+              raise SystemExit(f'{service}/{version} must declare applyMode=protected-workload-oidc')
+
+          binding=json.loads(Path('enterprise-cicd/contracts/iac-runtime-bindings.json').read_text())
+          plane=(binding['environments'][env].get('workload') or {})
+          expected_env=f'iac-{env}-workload-apply'
+          if plane.get('activationStatus') != 'ready':
+              raise SystemExit(f'{env}/workload Apply plane is not activated: {plane.get("activationStatus")}')
+          if plane.get('githubEnvironment') != expected_env:
+              raise SystemExit('workload GitHub Environment mismatch')
+          if plane.get('stateDataRole') != 'Storage Blob Data Contributor' or plane.get('stateScope') != 'container':
+              raise SystemExit('workload state permission must remain container-scoped Blob Data Contributor')
+          if set(plane.get('supportedServices', [])) != supported:
+              raise SystemExit('workload supported-service contract changed')
+          for key in ('roleAssignmentWrite','serviceCredentialRead','keyVaultSecretDataAccess','genericNetworkContributor'):
+              if plane.get(key) is not False:
+                  raise SystemExit(f'workload privilege guard failed: {key}')
+          client_id=plane.get('clientId')
+          if not client_id:
+              raise SystemExit(f'{env}/workload binding has no real clientId')
+
+          azure=binding['azure']; state=binding['state']
+          if state.get('authentication') != 'MicrosoftEntraID' or state.get('sharedKeyAccess') is not False:
+              raise SystemExit('state must remain Entra-only with Shared Key disabled')
+          values={
+              'environment':env, 'service':service, 'request_name':meta['name'],
+              'stack':catalog['rootStack'], 'client_id':client_id,
+              'tenant_id':azure['tenantId'], 'subscription_id':azure['subscriptionId'],
+              'github_environment':expected_env, 'state_rg':state['resourceGroup'],
+              'state_storage':state['storageAccount']
+          }
+          for key,value in values.items(): print(f'{key}={value}')
+          PY
+
+  exact-plan-apply:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: ${{ needs.resolve.outputs.github_environment }}
+    concurrency:
+      group: iac-${{ needs.resolve.outputs.environment }}-workload-apply
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ needs.resolve.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.resolve.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.resolve.outputs.subscription_id }}
+      ARM_RESOURCE_PROVIDER_REGISTRATIONS: 'none'
+      TFSTATE_RESOURCE_GROUP: ${{ needs.resolve.outputs.state_rg }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ needs.resolve.outputs.state_storage }}
+      REQUEST_PATH: ${{ inputs.request_path }}
+      TARGET_ENV: ${{ needs.resolve.outputs.environment }}
+      SERVICE: ${{ needs.resolve.outputs.service }}
+      REQUEST_NAME: ${{ needs.resolve.outputs.request_name }}
+      STACK: ${{ needs.resolve.outputs.stack }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login using isolated Workload Apply OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ needs.resolve.outputs.client_id }}
+          tenant-id: ${{ needs.resolve.outputs.tenant_id }}
+          subscription-id: ${{ needs.resolve.outputs.subscription_id }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.8'
+
+      - name: Render governed request and Entra-only backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iac-workload-apply
+          python enterprise-cicd/iac-catalog/render_request.py --request "$REQUEST_PATH" --output /tmp/iac-workload-apply/request.tfvars.json
+          python enterprise-cicd/terraform/state/render_backend.py \
+            --scope catalog --environment "$TARGET_ENV" --service "$SERVICE" --request "$REQUEST_NAME" --auth oidc \
+            --output /tmp/iac-workload-apply/backend.hcl
+
+      - name: Exact re-plan with native state lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" init -reconfigure -input=false -backend-config=/tmp/iac-workload-apply/backend.hcl
+          terraform -chdir="$STACK" validate
+          terraform -chdir="$STACK" plan -lock=true -lock-timeout=5m -input=false \
+            -var-file=/tmp/iac-workload-apply/request.tfvars.json -out=/tmp/iac-workload-apply/apply.tfplan
+          terraform -chdir="$STACK" show -json /tmp/iac-workload-apply/apply.tfplan > /tmp/iac-workload-apply/plan.json
+
+      - name: Enforce non-destructive workload Apply boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee /tmp/iac-workload-apply/plan-summary.json
+          import json
+          p=json.load(open('/tmp/iac-workload-apply/plan.json'))
+          changes=[]
+          for rc in p.get('resource_changes',[]):
+              actions=rc.get('change',{}).get('actions',[])
+              if actions != ['no-op']:
+                  changes.append({'address':rc.get('address'),'type':rc.get('type'),'actions':actions})
+          destructive=[x for x in changes if 'delete' in x['actions']]
+          if destructive:
+              raise SystemExit(f'destructive workload Apply forbidden; use governed decommission: {destructive}')
+          print(json.dumps({'environment':'${{ needs.resolve.outputs.environment }}','request':'${{ needs.resolve.outputs.request_name }}','service':'${{ needs.resolve.outputs.service }}','changes':changes,'destructive':[],'stateLock':True,'exactSavedPlan':True,'status':'approved-for-workload-apply'},indent=2))
+          PY
+
+      - name: Apply exact saved plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$STACK" apply -input=false -auto-approve /tmp/iac-workload-apply/apply.tfplan
+          terraform -chdir="$STACK" output -json > /tmp/iac-workload-apply/terraform-outputs.json
+
+      - name: Verify Azure workload resource
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >/tmp/iac-workload-apply/verify.env
+          import json, os
+          t=json.load(open('/tmp/iac-workload-apply/request.tfvars.json'))
+          o=json.load(open('/tmp/iac-workload-apply/terraform-outputs.json'))
+          service=os.environ['SERVICE']
+          id_keys={
+            'acr':'acr_id','storage':'storage_account_id','key-vault':'key_vault_id',
+            'service-bus':'service_bus_id','managed-redis':'redis_id','postgresql-flexible':'postgresql_id'
+          }
+          name_keys={
+            'acr':'acr_name','storage':'storage_account_name','key-vault':'key_vault_name',
+            'service-bus':'service_bus_name','managed-redis':'redis_name','postgresql-flexible':'postgresql_server_name'
+          }
+          rid=o[id_keys[service]]['value']
+          print('RESOURCE_ID='+rid)
+          print('RESOURCE_GROUP='+t['resource_group_name'])
+          print('RESOURCE_NAME='+t[name_keys[service]])
+          if service == 'storage': print('PRIVATE_ENDPOINT_NAME=pe-'+t['storage_account_name']+'-blob')
+          elif service == 'key-vault': print('PRIVATE_ENDPOINT_NAME=pe-'+t['key_vault_name'])
+          elif service == 'service-bus': print('PRIVATE_ENDPOINT_NAME=pe-'+t['service_bus_name'])
+          elif service == 'managed-redis': print('PRIVATE_ENDPOINT_NAME=pe-'+t['redis_name'])
+          else: print('PRIVATE_ENDPOINT_NAME=')
+          PY
+          source /tmp/iac-workload-apply/verify.env
+          az resource show --ids "$RESOURCE_ID" -o json > /tmp/iac-workload-apply/azure-resource.json
+          if [ -n "$PRIVATE_ENDPOINT_NAME" ]; then
+            az network private-endpoint show -g "$RESOURCE_GROUP" -n "$PRIVATE_ENDPOINT_NAME" -o json > /tmp/iac-workload-apply/private-endpoint.json
+          else
+            printf '{}\n' > /tmp/iac-workload-apply/private-endpoint.json
+          fi
+          python - <<'PY' | tee /tmp/iac-workload-apply/verification-summary.json
+          import json, os
+          t=json.load(open('/tmp/iac-workload-apply/request.tfvars.json'))
+          o=json.load(open('/tmp/iac-workload-apply/terraform-outputs.json'))
+          r=json.load(open('/tmp/iac-workload-apply/azure-resource.json'))
+          pe=json.load(open('/tmp/iac-workload-apply/private-endpoint.json'))
+          service=os.environ['SERVICE']
+          id_keys={'acr':'acr_id','storage':'storage_account_id','key-vault':'key_vault_id','service-bus':'service_bus_id','managed-redis':'redis_id','postgresql-flexible':'postgresql_id'}
+          assert r['id'].lower() == o[id_keys[service]]['value'].lower()
+          assert r['resourceGroup'] == t['resource_group_name']
+          if service in {'storage','key-vault','service-bus','managed-redis'}:
+              assert pe['resourceGroup'] == t['resource_group_name']
+              connections=(pe.get('privateLinkServiceConnections') or []) + (pe.get('manualPrivateLinkServiceConnections') or [])
+              assert connections, 'private endpoint has no service connection'
+              assert all(c['privateLinkServiceConnectionState']['status'] == 'Approved' for c in connections)
+          if service == 'storage':
+              assert r['properties']['publicNetworkAccess'] == 'Disabled'
+              assert r['properties']['allowSharedKeyAccess'] is False
+          elif service == 'key-vault':
+              assert r['properties']['publicNetworkAccess'] == 'Disabled'
+              assert r['properties']['enableRbacAuthorization'] is True
+          elif service in {'service-bus','managed-redis','postgresql-flexible'}:
+              assert str(r['properties'].get('publicNetworkAccess','Disabled')).lower() == 'disabled'
+          print(json.dumps({'status':'passed','service':service,'resourceId':r['id'],'resourceGroup':t['resource_group_name'],'privateEndpointVerified':service in {'storage','key-vault','service-bus','managed-redis'},'remoteState':True,'exactSavedPlanApplied':True},indent=2))
+          PY
+
+      - name: Require post-Apply convergence to No Changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          terraform -chdir="$STACK" plan -lock=true -lock-timeout=5m -input=false \
+            -detailed-exitcode -var-file=/tmp/iac-workload-apply/request.tfvars.json \
+            -out=/tmp/iac-workload-apply/post-apply.tfplan
+          rc=$?
+          set -e
+          terraform -chdir="$STACK" show -json /tmp/iac-workload-apply/post-apply.tfplan > /tmp/iac-workload-apply/post-apply-plan.json || true
+          if [ "$rc" -eq 0 ]; then
+            printf '{"status":"passed","postApplyPlan":"no-changes"}\n' | tee /tmp/iac-workload-apply/convergence-summary.json
+          elif [ "$rc" -eq 2 ]; then
+            echo 'Post-Apply Terraform Plan still contains changes; Apply is not converged.' >&2
+            exit 1
+          else
+            echo "Post-Apply Terraform Plan failed rc=$rc" >&2
+            exit "$rc"
+          fi
+
+      - name: Publish Workload Apply evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-${{ needs.resolve.outputs.environment }}-workload-apply-${{ needs.resolve.outputs.request_name }}
+          path: /tmp/iac-workload-apply
+          if-no-files-found: error
+          retention-days: 90

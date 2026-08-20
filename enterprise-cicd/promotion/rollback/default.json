@@ -1,0 +1,10 @@
+{
+  "apiVersion": "platform.promotion/v1",
+  "kind": "RollbackPolicy",
+  "spec": {
+    "target": "previous-approved-digest",
+    "rebuildForbidden": true,
+    "auditLinkRequired": true,
+    "postRollbackVerificationRequired": true
+  }
+}

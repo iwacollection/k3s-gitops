@@ -1,0 +1,4 @@
+{
+  "principalType": "ServicePrincipal",
+  "roleName": "Reader"
+}

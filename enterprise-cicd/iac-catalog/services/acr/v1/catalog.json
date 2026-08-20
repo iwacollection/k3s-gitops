@@ -1,0 +1,14 @@
+{
+  "service": "acr",
+  "version": "v1",
+  "owner": "platform-sre",
+  "terraformModule": "enterprise-cicd/terraform/modules/acr",
+  "rootStack": "enterprise-cicd/terraform/stacks/platform/acr",
+  "requestSchema": "request.schema.json",
+  "defaults": "defaults.json",
+  "policy": "policy.json",
+  "lifecycle": "active",
+  "riskClass": "workload",
+  "billingImpact": "billable",
+  "applyMode": "protected-workload-oidc"
+}

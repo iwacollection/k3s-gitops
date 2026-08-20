@@ -1,0 +1,190 @@
+name: Reusable AKS Observation v1
+
+on:
+  workflow_call:
+    inputs:
+      cluster_binding:
+        required: true
+        type: string
+      application:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      artifact_repository:
+        required: true
+        type: string
+      artifact_digest:
+        required: true
+        type: string
+      deployment_name:
+        required: false
+        type: string
+        default: ''
+      service_name:
+        required: false
+        type: string
+        default: ''
+      metrics_artifact_name:
+        required: false
+        type: string
+        default: ''
+      metrics_file:
+        required: false
+        type: string
+        default: metrics.json
+    outputs:
+      observation_artifact_name:
+        value: ${{ jobs.observe.outputs.artifact_name }}
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+    steps:
+      - name: Checkout platform contracts
+        uses: actions/checkout@v4
+
+      - name: Resolve read-only observation target
+        id: target
+        shell: bash
+        env:
+          BINDING: ${{ inputs.cluster_binding }}
+          APP: ${{ inputs.application }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOYMENT_INPUT: ${{ inputs.deployment_name }}
+          SERVICE_INPUT: ${{ inputs.service_name }}
+        run: |
+          set -euo pipefail
+          test -f "$BINDING"
+          binding_env=$(jq -r .metadata.environment "$BINDING")
+          [[ "$binding_env" == "$ENVIRONMENT" ]]
+          echo "resource_group=$(jq -r .spec.azure.resourceGroup "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "cluster_name=$(jq -r .spec.azure.clusterName "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "cluster_type=$(jq -r .spec.azure.clusterType "$BINDING")" >> "$GITHUB_OUTPUT"
+          echo "flux_name=$(jq -r .spec.flux.configurationName "$BINDING")" >> "$GITHUB_OUTPUT"
+          kustomization=$(jq -r --arg env "$ENVIRONMENT" '.spec.flux.kustomizations[] | select(.path | endswith("/environments/" + $env)) | .name' "$BINDING" | head -n1)
+          test -n "$kustomization"
+          echo "kustomization=$kustomization" >> "$GITHUB_OUTPUT"
+          echo "namespace=cicd-$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "deployment=${DEPLOYMENT_INPUT:-$APP}" >> "$GITHUB_OUTPUT"
+          echo "service=${SERVICE_INPUT:-$APP}" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login as CD verifier
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Flux CLI extension
+        shell: bash
+        run: az extension add --name k8s-configuration --upgrade --yes
+
+      - name: Install pinned kubelogin
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: v0.2.19
+
+      - name: Set non-admin AKS context
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ steps.target.outputs.resource_group }}
+          cluster-name: ${{ steps.target.outputs.cluster_name }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Collect Flux reconciliation state
+        shell: bash
+        env:
+          RG: ${{ steps.target.outputs.resource_group }}
+          CLUSTER: ${{ steps.target.outputs.cluster_name }}
+          CLUSTER_TYPE: ${{ steps.target.outputs.cluster_type }}
+          FLUX_NAME: ${{ steps.target.outputs.flux_name }}
+          KUSTOMIZATION: ${{ steps.target.outputs.kustomization }}
+        run: |
+          set -euo pipefail
+          mkdir -p .platform-observation
+          az k8s-configuration flux kustomization show \
+            --resource-group "$RG" \
+            --cluster-name "$CLUSTER" \
+            --cluster-type "$CLUSTER_TYPE" \
+            --name "$FLUX_NAME" \
+            --kustomization-name "$KUSTOMIZATION" \
+            --output json > .platform-observation/flux.json
+
+      - name: Collect namespace-scoped Kubernetes state
+        shell: bash
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+          DEPLOYMENT: ${{ steps.target.outputs.deployment }}
+          SERVICE: ${{ steps.target.outputs.service }}
+        run: |
+          set -euo pipefail
+          kubectl --namespace "$NAMESPACE" get deployment "$DEPLOYMENT" -o json > .platform-observation/deployment.json
+          kubectl --namespace "$NAMESPACE" get endpointslices.discovery.k8s.io \
+            --selector "kubernetes.io/service-name=$SERVICE" \
+            -o json > .platform-observation/endpoints.json
+
+      - name: Download approved SLI metrics observation
+        if: ${{ inputs.metrics_artifact_name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.metrics_artifact_name }}
+          path: .platform-metrics
+
+      - name: Normalize deployment observation
+        shell: bash
+        env:
+          APP: ${{ inputs.application }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          REPOSITORY: ${{ inputs.artifact_repository }}
+          DIGEST: ${{ inputs.artifact_digest }}
+          METRICS_FILE: ${{ inputs.metrics_file }}
+          METRICS_ENABLED: ${{ inputs.metrics_artifact_name != '' }}
+        run: |
+          set -euo pipefail
+          metrics_args=()
+          if [[ "$METRICS_ENABLED" == "true" ]]; then
+            metrics_args=(--metrics-json ".platform-metrics/$METRICS_FILE")
+          fi
+          python enterprise-cicd/promotion/verification/collect_aks_observation.py \
+            --application "$APP" \
+            --environment "$ENVIRONMENT" \
+            --artifact-repository "$REPOSITORY" \
+            --artifact-digest "$DIGEST" \
+            --flux-json .platform-observation/flux.json \
+            --deployment-json .platform-observation/deployment.json \
+            --endpoints-json .platform-observation/endpoints.json \
+            "${metrics_args[@]}" \
+            --output .platform-observation/deployment-observation.json
+
+      - name: Name observation artifact
+        id: meta
+        shell: bash
+        env:
+          APP: ${{ inputs.application }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: echo "artifact_name=deployment-observation-${APP}-${ENVIRONMENT}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable observation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: .platform-observation/
+          if-no-files-found: error
+          retention-days: 90

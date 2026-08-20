@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IAM Role Binding Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["principalId", "principalType", "roleName", "scopeResourceId"],
+  "properties": {
+    "principalId": {"type": "string", "pattern": "^[0-9a-fA-F-]{36}$"},
+    "principalType": {"type": "string", "enum": ["ServicePrincipal"]},
+    "roleName": {"type": "string", "enum": ["Reader", "AcrPull", "Storage Blob Data Reader", "Key Vault Secrets User"]},
+    "scopeResourceId": {"type": "string", "pattern": "^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/.+$"}
+  }
+}
