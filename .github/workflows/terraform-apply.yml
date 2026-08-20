@@ -17,7 +17,15 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    uses: ./.github/workflows/terraform-reusable-enterprise.yml
+    with:
+      environment: ${{ inputs.environment }}
+      working_directory: ${{ inputs.working_directory }}
+      command: plan
+
   apply:
+    needs: plan
     uses: ./.github/workflows/terraform-reusable-enterprise.yml
     with:
       environment: ${{ inputs.environment }}
