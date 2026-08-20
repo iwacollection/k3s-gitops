@@ -73,3 +73,7 @@ jobs:
       - name: Terraform Apply
         if: inputs.command == 'apply'
         run: terraform apply -lock-timeout=5m -auto-approve tfplan
+
+      - name: Terraform State Verify
+        if: inputs.command == 'apply'
+        run: terraform state list
