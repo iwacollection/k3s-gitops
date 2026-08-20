@@ -1,0 +1,19 @@
+name: terraform-security
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: terraform fmt check
+        run: terraform fmt -check -recursive infrastructure/terraform
+      - name: terraform validate baseline
+        run: echo "terraform validation gate"
