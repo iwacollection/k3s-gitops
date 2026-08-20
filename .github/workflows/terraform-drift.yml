@@ -1,0 +1,19 @@
+name: Terraform Drift Detection
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Plan Drift Check
+        run: terraform plan -detailed-exitcode
