@@ -9,6 +9,9 @@ on:
       command:
         required: true
         type: string
+      environment:
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -17,7 +20,7 @@ permissions:
 jobs:
   terraform:
     runs-on: ubuntu-latest
-    environment: ${{ vars.TARGET_ENVIRONMENT }}
+    environment: ${{ inputs.environment }}
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
