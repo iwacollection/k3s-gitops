@@ -65,3 +65,27 @@ module "aks" {
   workload_identity_enabled    = true
   oidc_issuer_enabled          = true
 }
+
+module "container_registry" {
+  source = "../modules/container_registry"
+
+  name                = "${var.name}acr"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+}
+
+module "keyvault" {
+  source = "../modules/keyvault"
+
+  name                = "${var.name}-kv"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+}
+
+module "monitoring" {
+  source = "../modules/monitoring"
+
+  name                = "${var.name}-monitoring"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+}
