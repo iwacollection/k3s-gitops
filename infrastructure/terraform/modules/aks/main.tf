@@ -28,10 +28,15 @@ resource "azurerm_kubernetes_cluster" "main" {
     min_count           = var.min_count
     max_count           = var.max_count
     availability_zones  = var.availability_zones
+    os_disk_type        = "Managed"
 
     upgrade_settings {
       max_surge = var.max_surge
     }
+  }
+
+  identity {
+    type = "SystemAssigned"
   }
 
   maintenance_window {
@@ -41,9 +46,26 @@ resource "azurerm_kubernetes_cluster" "main" {
     }
   }
 
-  identity {
-    type = "SystemAssigned"
+  lifecycle {
+    prevent_destroy = true
   }
+}
+
+resource "azurerm_kubernetes_cluster_node_pool" "workload" {
+  count = var.enable_workload_node_pool ? 1 : 0
+
+  name                  = "workload"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  vm_size               = var.workload_vm_size
+  node_count            = var.workload_node_count
+
+  enable_auto_scaling = true
+  min_count           = var.workload_min_count
+  max_count           = var.workload_max_count
+
+  availability_zones = var.availability_zones
+  mode               = "User"
+  os_disk_type       = "Managed"
 
   lifecycle {
     prevent_destroy = true
