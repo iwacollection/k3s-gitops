@@ -12,6 +12,7 @@ jobs:
     name: Approved Terraform Apply
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - uses: actions/checkout@v4
 
@@ -20,9 +21,28 @@ jobs:
         with:
           name: production-tfplan
 
-      - name: Terraform Apply
-        working-directory: infrastructure/terraform/environments/production
-        run: terraform apply tfplan
+      - name: Validate plan artifact
+        run: |
+          if [ ! -f tfplan ]; then
+            echo "Approved terraform plan artifact is missing"
+            exit 1
+          fi
+          echo "Plan artifact verified"
 
-      - name: Verification
-        run: echo "Terraform production apply completed. Verify Azure resources and state consistency."
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform init
+
+      - name: Terraform Apply Approved Plan
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform apply -input=false tfplan
+
+      - name: Post Apply Verification
+        working-directory: infrastructure/terraform/environments/production
+        run: |
+          terraform plan -refresh-only -detailed-exitcode || code=$?
+          if [ "${code:-0}" = "2" ]; then
+            echo "Terraform state drift detected after apply"
+            exit 1
+          fi
+          echo "Production apply verification completed"
