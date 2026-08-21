@@ -1,0 +1,11 @@
+terraform {
+  required_version = ">= 1.6.0"
+}
+
+# Production environment entry point.
+# Modules should be consumed here instead of creating resources directly.
+
+# Example:
+# module "network" {
+#   source = "../../modules/network"
+# }
