@@ -25,3 +25,27 @@ resource "azurerm_lb" "main" {
     prevent_destroy = true
   }
 }
+
+resource "azurerm_lb_backend_address_pool" "main" {
+  loadbalancer_id = azurerm_lb.main.id
+  name            = "backend-pool"
+}
+
+resource "azurerm_lb_probe" "http" {
+  loadbalancer_id = azurerm_lb.main.id
+  name            = "http-health-probe"
+  port            = 80
+  protocol        = "Http"
+  request_path    = "/healthz"
+}
+
+resource "azurerm_lb_rule" "http" {
+  loadbalancer_id                = azurerm_lb.main.id
+  name                           = "http-rule"
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 80
+  frontend_ip_configuration_name = "frontend"
+  probe_id                       = azurerm_lb_probe.http.id
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
+}
