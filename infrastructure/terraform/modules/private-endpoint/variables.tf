@@ -17,3 +17,9 @@ variable "subnet_id" {
 variable "resource_id" {
   type = string
 }
+
+variable "private_dns_zone_ids" {
+  description = "Private DNS zones associated with this endpoint"
+  type        = list(string)
+  default     = []
+}
