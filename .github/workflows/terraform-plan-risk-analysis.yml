@@ -1,0 +1,37 @@
+name: Terraform Plan Risk Analysis
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+      - 'scripts/terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-risk-analysis:
+    name: Terraform Risk Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform
+        run: terraform init -backend=false
+
+      - name: Terraform Plan
+        working-directory: infrastructure/terraform
+        run: terraform plan -out=tfplan
+
+      - name: Convert Plan To JSON
+        working-directory: infrastructure/terraform
+        run: terraform show -json tfplan > tfplan.json
+
+      - name: Destructive Change Detection
+        run: bash scripts/terraform/terraform-plan-risk-check.sh infrastructure/terraform/tfplan.json
