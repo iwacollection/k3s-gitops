@@ -1,9 +1,9 @@
 variable "database_admin_username" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 variable "database_admin_password" {
-  type = string
+  type      = string
   sensitive = true
 }
