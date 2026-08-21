@@ -29,3 +29,7 @@ resource "azurerm_management_lock" "production" {
   lock_level = var.lock_level
   notes      = "Managed by Terraform production protection module"
 }
+
+output "lock_id" {
+  value = azurerm_management_lock.production.id
+}
