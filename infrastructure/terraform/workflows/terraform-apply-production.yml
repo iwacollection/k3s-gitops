@@ -1,0 +1,27 @@
+name: terraform-apply-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        required: true
+        default: production
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  apply:
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: infrastructure/terraform/environments/${{ inputs.environment }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+        working-directory: infrastructure/terraform/environments/${{ inputs.environment }}
