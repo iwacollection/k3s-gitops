@@ -16,6 +16,10 @@ resource "azurerm_kubernetes_cluster" "main" {
   private_cluster_enabled = var.private_cluster_enabled
   network_policy          = var.network_policy
 
+  role_based_access_control_enabled = var.azure_rbac_enabled
+  workload_identity_enabled          = var.workload_identity_enabled
+  oidc_issuer_enabled                = var.oidc_issuer_enabled
+
   default_node_pool {
     name       = "system"
     node_count = var.node_count
