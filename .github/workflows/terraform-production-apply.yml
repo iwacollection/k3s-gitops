@@ -1,0 +1,28 @@
+name: Terraform Production Apply
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    name: Approved Terraform Apply
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Approved Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: production-tfplan
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform apply tfplan
+
+      - name: Verification
+        run: echo "Terraform production apply completed. Verify Azure resources and state consistency."
