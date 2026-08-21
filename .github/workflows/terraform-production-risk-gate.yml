@@ -29,6 +29,10 @@ jobs:
           terraform init -backend=false
           terraform validate
 
+      - name: Terraform module contract checks
+        run: |
+          bash tests/terraform/module-contract-check.sh
+
       - name: Terraform plan
         run: |
           cd infrastructure/terraform
