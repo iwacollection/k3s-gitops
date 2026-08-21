@@ -25,11 +25,18 @@ jobs:
         with:
           name: ${{ inputs.artifact_name }}
 
-      - name: Terraform init
+      - name: Verify plan artifact
         run: |
-          terraform -version
-          terraform init -backend=false infrastructure/terraform/environments/production
+          test -f tfplan
+          terraform show tfplan > /dev/null
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init production backend
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform init
 
       - name: Terraform apply approved plan
-        run: |
-          terraform apply -input=false tfplan
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform apply -input=false ../../../tfplan
