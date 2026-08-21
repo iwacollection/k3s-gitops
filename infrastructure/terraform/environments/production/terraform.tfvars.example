@@ -1,6 +1,9 @@
-environment = "production"
+name = "prod-platform"
 
-# Production resources should be imported before apply when they already exist.
-# Review terraform plan and ensure unexpected destroy/replace is zero.
+resource_group_name = "rg-prod-platform"
 
-location = "<azure-region>"
+location = "eastus"
+
+address_space = [
+  "10.10.0.0/16"
+]
