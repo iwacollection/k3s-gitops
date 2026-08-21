@@ -1,0 +1,42 @@
+name: Terraform Azure Provision
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        required: true
+        default: production
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/azure-production
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infrastructure/terraform/azure-production
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.event.inputs.environment == 'production'
+        working-directory: infrastructure/terraform/azure-production
+        run: terraform apply tfplan
