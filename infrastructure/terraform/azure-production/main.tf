@@ -52,6 +52,14 @@ module "nat_gateway" {
   location            = azurerm_resource_group.production.location
 }
 
+module "subnet_association" {
+  source = "../modules/subnet-association"
+
+  subnet_id                 = module.network.subnet_id
+  nat_gateway_id             = module.nat_gateway.id
+  network_security_group_id  = module.network_security.id
+}
+
 module "load_balancer" {
   source = "../modules/load-balancer"
 
