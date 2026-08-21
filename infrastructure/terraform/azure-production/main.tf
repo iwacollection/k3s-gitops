@@ -71,6 +71,16 @@ module "database" {
   location = azurerm_resource_group.production.location
 }
 
+module "managed_redis" {
+  source = "../modules/managed_redis"
+  name = "${var.name}-redis"
+  resource_group_name = azurerm_resource_group.production.name
+  location = azurerm_resource_group.production.location
+  capacity = 1
+  family = "C"
+  sku_name = "Standard"
+}
+
 module "aks" {
   source = "../modules/aks"
   name = "${var.name}-aks"
@@ -118,6 +128,15 @@ module "postgres_private_endpoint" {
   resource_group_name = azurerm_resource_group.production.name
   subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.database.id
+}
+
+module "redis_private_endpoint" {
+  source = "../modules/private-endpoint"
+  name = "${var.name}-redis-pe"
+  location = azurerm_resource_group.production.location
+  resource_group_name = azurerm_resource_group.production.name
+  subnet_id = module.network.private_endpoint_subnet_id
+  resource_id = module.managed_redis.id
 }
 
 module "acr_private_endpoint" {
