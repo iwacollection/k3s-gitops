@@ -39,9 +39,25 @@ jobs:
           cd infrastructure/terraform
           terraform show -json tfplan > plan.json
 
+      - name: Upload terraform plan evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-evidence
+          path: |
+            infrastructure/terraform/tfplan
+            infrastructure/terraform/plan.json
+
       - name: Production risk analysis
         run: |
           python3 scripts/terraform/safety/plan-risk-analyzer.py infrastructure/terraform/plan.json
+
+      - name: Destroy guard
+        run: |
+          python3 scripts/terraform/safety/destroy-guard.py infrastructure/terraform/plan.json
+
+      - name: Replace guard
+        run: |
+          python3 scripts/terraform/safety/replace-guard.py infrastructure/terraform/plan.json
 
       - name: Block unsafe terraform settings
         run: |
