@@ -116,7 +116,7 @@ module "postgres_private_endpoint" {
   name = "${var.name}-postgres-pe"
   location = azurerm_resource_group.production.location
   resource_group_name = azurerm_resource_group.production.name
-  subnet_id = module.network.subnet_id
+  subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.database.id
 }
 
@@ -125,7 +125,7 @@ module "acr_private_endpoint" {
   name = "${var.name}-acr-pe"
   location = azurerm_resource_group.production.location
   resource_group_name = azurerm_resource_group.production.name
-  subnet_id = module.network.subnet_id
+  subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.container_registry.id
 }
 
@@ -134,7 +134,7 @@ module "keyvault_private_endpoint" {
   name = "${var.name}-kv-pe"
   location = azurerm_resource_group.production.location
   resource_group_name = azurerm_resource_group.production.name
-  subnet_id = module.network.subnet_id
+  subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.keyvault.id
 }
 
