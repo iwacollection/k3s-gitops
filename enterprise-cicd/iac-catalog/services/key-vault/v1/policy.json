@@ -1,5 +1,0 @@
-{
-  "dev": {"enabled": true, "allowedSku": ["Standard"], "requirePurgeProtection": true, "requirePublicNetworkDisabled": true, "requiresApproval": false},
-  "test": {"enabled": true, "allowedSku": ["Standard", "Premium"], "requirePurgeProtection": true, "requirePublicNetworkDisabled": true, "requiresApproval": false},
-  "prod": {"enabled": true, "allowedSku": ["Premium"], "requirePurgeProtection": true, "requirePublicNetworkDisabled": true, "requiresApproval": true}
-}

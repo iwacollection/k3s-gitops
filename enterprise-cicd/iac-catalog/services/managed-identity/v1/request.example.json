@@ -1,3 +1,0 @@
-{
-  "apiVersion":"platform.iac/v1","kind":"InfrastructureRequest","metadata":{"name":"payment-identity","owner":"payment-team","application":"payment"},"spec":{"environment":"dev","region":"eastus","service":"managed-identity","templateVersion":"v1","parameters":{"purpose":"workload"}}
-}

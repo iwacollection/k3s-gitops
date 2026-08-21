@@ -1,6 +1,0 @@
-{
-  "apiVersion": "platform.iac/v1",
-  "kind": "InfrastructureRequest",
-  "metadata": {"name": "payment-storage", "owner": "payment-team", "application": "payment"},
-  "spec": {"environment": "dev", "region": "eastus", "service": "storage", "templateVersion": "v1", "parameters": {"replication": "LRS", "accessTier": "Hot", "publicNetworkAccess": "Enabled", "sharedKeyAccess": false, "blobVersioning": true, "deleteRetentionDays": 30}}
-}

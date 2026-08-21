@@ -1,5 +1,0 @@
-{
-  "dev": {"enabled": true, "allowedSku": ["Balanced_B0", "Balanced_B1", "Balanced_B3"], "requirePublicNetworkDisabled": true, "requiresApproval": false},
-  "test": {"enabled": true, "allowedSku": ["Balanced_B1", "Balanced_B3", "Balanced_B5"], "requirePublicNetworkDisabled": true, "requireHighAvailability": true, "requiresApproval": false},
-  "prod": {"enabled": true, "allowedSku": ["Balanced_B3", "Balanced_B5", "Balanced_B10"], "requirePublicNetworkDisabled": true, "requireHighAvailability": true, "requiresApproval": true}
-}

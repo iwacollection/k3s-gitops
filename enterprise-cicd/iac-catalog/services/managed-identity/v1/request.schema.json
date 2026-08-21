@@ -1,3 +1,0 @@
-{
-  "$schema":"https://json-schema.org/draft/2020-12/schema","title":"Managed Identity Request v1","type":"object","additionalProperties":false,"required":["purpose"],"properties":{"purpose":{"type":"string"}}
-}
