@@ -1,0 +1,19 @@
+# Production Terraform variables template
+# Copy to variables.tf / terraform.tfvars and fill approved values.
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+  default     = "production"
+}
+
+variable "location" {
+  description = "Azure region"
+  type        = string
+}
+
+variable "resource_adoption_mode" {
+  description = "Existing resource adoption mode. Must remain enabled for imported production resources."
+  type        = bool
+  default     = true
+}
