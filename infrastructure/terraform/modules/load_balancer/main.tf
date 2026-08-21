@@ -20,3 +20,26 @@ resource "azurerm_lb" "main" {
 
   tags = var.tags
 }
+
+resource "azurerm_lb_backend_address_pool" "main" {
+  loadbalancer_id = azurerm_lb.main.id
+  name            = "backend-pool"
+}
+
+resource "azurerm_lb_probe" "main" {
+  loadbalancer_id = azurerm_lb.main.id
+  name            = "health-probe"
+  port            = var.probe_port
+  protocol        = "Tcp"
+}
+
+resource "azurerm_lb_rule" "main" {
+  loadbalancer_id                = azurerm_lb.main.id
+  name                           = "application-rule"
+  protocol                       = "Tcp"
+  frontend_port                  = var.frontend_port
+  backend_port                   = var.backend_port
+  frontend_ip_configuration_name = "frontend"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
+  probe_id                       = azurerm_lb_probe.main.id
+}
