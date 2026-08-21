@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'infrastructure/terraform/**'
+      - 'scripts/terraform/**'
       - '.github/workflows/**terraform**'
 
 permissions:
@@ -28,10 +29,19 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-      - name: Verify production protection checks exist
+      - name: Terraform plan
         run: |
-          test -f infrastructure/terraform/policy/terraform-plan-risk-check.py
-          test -f infrastructure/terraform/policy/destroy-replace-risk-check.py
+          cd infrastructure/terraform
+          terraform plan -out=tfplan
+
+      - name: Convert plan to json
+        run: |
+          cd infrastructure/terraform
+          terraform show -json tfplan > plan.json
+
+      - name: Production risk analysis
+        run: |
+          python3 scripts/terraform/safety/plan-risk-analyzer.py infrastructure/terraform/plan.json
 
       - name: Block unsafe terraform settings
         run: |
