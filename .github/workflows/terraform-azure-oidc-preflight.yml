@@ -1,0 +1,36 @@
+name: Terraform Azure OIDC Preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  azure-preflight:
+    name: Azure Identity And Backend Preflight
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure CLI Login Check
+        run: |
+          set -e
+          if ! command -v az >/dev/null; then
+            echo "azure cli missing"
+            exit 1
+          fi
+          az version
+
+      - name: Terraform Backend Validation
+        working-directory: infrastructure/terraform/environments/production
+        run: |
+          set -e
+          if [ ! -f backend.tf ]; then
+            echo "production backend.tf missing"
+            exit 1
+          fi
+          terraform init -backend=false
+          echo "terraform backend configuration detected"
