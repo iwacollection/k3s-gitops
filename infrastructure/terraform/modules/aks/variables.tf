@@ -45,6 +45,21 @@ variable "availability_zones" {
   default = ["1", "2", "3"]
 }
 
+variable "maintenance_window_day" {
+  type    = string
+  default = "Sunday"
+}
+
+variable "maintenance_window_start_time" {
+  type    = string
+  default = "02:00"
+}
+
+variable "maintenance_window_duration" {
+  type    = number
+  default = 4
+}
+
 variable "private_cluster_enabled" {
   type    = bool
   default = false
