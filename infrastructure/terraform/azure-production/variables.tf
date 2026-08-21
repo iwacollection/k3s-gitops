@@ -1,3 +1,8 @@
+variable "environment" {
+  type    = string
+  default = "production"
+}
+
 variable "name" {
   type = string
 }
