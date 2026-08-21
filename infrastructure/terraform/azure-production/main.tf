@@ -13,12 +13,26 @@ provider "azurerm" {
   features {}
 }
 
+resource "azurerm_resource_group" "production" {
+  name     = var.resource_group_name
+  location = var.location
+
+  tags = {
+    environment = "production"
+    managed_by  = "terraform"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 module "network" {
   source = "../modules/network"
 
   name                = var.name
-  resource_group_name = var.resource_group_name
-  location            = var.location
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
   address_space       = var.address_space
 }
 
@@ -26,8 +40,8 @@ module "load_balancer" {
   source = "../modules/load-balancer"
 
   name                = "${var.name}-lb"
-  resource_group_name = var.resource_group_name
-  location            = var.location
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
   subnet_id           = module.network.subnet_id
 }
 
@@ -35,6 +49,6 @@ module "database" {
   source = "../modules/database"
 
   name                = "${var.name}-db"
-  resource_group_name = var.resource_group_name
-  location            = var.location
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
 }
