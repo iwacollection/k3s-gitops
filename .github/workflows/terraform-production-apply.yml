@@ -3,6 +3,10 @@ name: Terraform Production Apply
 on:
   workflow_dispatch:
 
+concurrency:
+  group: terraform-production-apply
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write
@@ -18,11 +22,12 @@ jobs:
 
       - name: Terraform Preflight
         run: |
+          set -e
           if ! command -v terraform >/dev/null; then
             echo "terraform cli missing"
             exit 1
           fi
-          echo "terraform preflight passed"
+          terraform version
 
       - name: Download Approved Plan
         uses: actions/download-artifact@v4
@@ -31,20 +36,14 @@ jobs:
 
       - name: Validate approved plan artifact
         run: |
-          if [ ! -f tfplan ]; then
-            echo "Approved terraform plan artifact is missing"
-            exit 1
-          fi
+          set -e
+          test -f tfplan || { echo "Approved terraform plan artifact is missing"; exit 1; }
+          sha256sum tfplan
           echo "Approved plan artifact verified"
-
-      - name: Verify plan metadata
-        run: |
-          sha256sum tfplan > tfplan.sha256
-          echo "Plan checksum generated"
 
       - name: Terraform Init
         working-directory: infrastructure/terraform/environments/production
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply Approved Plan
         working-directory: infrastructure/terraform/environments/production
