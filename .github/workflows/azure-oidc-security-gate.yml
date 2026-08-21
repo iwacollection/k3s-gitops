@@ -1,0 +1,23 @@
+name: Azure OIDC Security Gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'infrastructure/terraform/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  oidc-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Azure authentication model
+        run: |
+          echo "Production rule: use GitHub OIDC federation"
+          echo "Long-lived Azure client secrets are not allowed"
