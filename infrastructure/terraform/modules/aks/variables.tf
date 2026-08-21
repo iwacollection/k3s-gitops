@@ -19,3 +19,13 @@ variable "vm_size" {
   type    = string
   default = "Standard_D2s_v5"
 }
+
+variable "private_cluster_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "network_policy" {
+  type    = string
+  default = "azure"
+}
