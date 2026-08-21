@@ -12,12 +12,12 @@ variable "resource_group_name" {
 
 variable "node_count" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "vm_size" {
   type    = string
-  default = "Standard_D2s_v5"
+  default = "Standard_D4s_v5"
 }
 
 variable "enable_auto_scaling" {
@@ -27,12 +27,12 @@ variable "enable_auto_scaling" {
 
 variable "min_count" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "max_count" {
   type    = number
-  default = 5
+  default = 10
 }
 
 variable "max_surge" {
@@ -62,7 +62,7 @@ variable "maintenance_window_duration" {
 
 variable "private_cluster_enabled" {
   type    = bool
-  default = false
+  default = true
 }
 
 variable "network_policy" {
@@ -83,4 +83,29 @@ variable "workload_identity_enabled" {
 variable "oidc_issuer_enabled" {
   type    = bool
   default = true
+}
+
+variable "enable_workload_node_pool" {
+  type    = bool
+  default = true
+}
+
+variable "workload_vm_size" {
+  type    = string
+  default = "Standard_D4s_v5"
+}
+
+variable "workload_node_count" {
+  type    = number
+  default = 3
+}
+
+variable "workload_min_count" {
+  type    = number
+  default = 3
+}
+
+variable "workload_max_count" {
+  type    = number
+  default = 20
 }
