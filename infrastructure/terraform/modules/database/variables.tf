@@ -11,31 +11,31 @@ variable "resource_group_name" {
 }
 
 variable "admin_username" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 variable "admin_password" {
-  type = string
+  type      = string
   sensitive = true
 }
 
 variable "postgres_version" {
-  type = string
+  type    = string
   default = "16"
 }
 
 variable "sku_name" {
-  type = string
+  type    = string
   default = "B_Standard_B1ms"
 }
 
 variable "storage_mb" {
-  type = number
+  type    = number
   default = 32768
 }
 
 variable "backup_retention_days" {
-  type = number
+  type    = number
   default = 7
 }
