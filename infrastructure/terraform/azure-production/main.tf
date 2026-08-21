@@ -105,3 +105,23 @@ module "monitoring" {
   resource_group_name = azurerm_resource_group.production.name
   location            = azurerm_resource_group.production.location
 }
+
+module "private_dns" {
+  source = "../modules/private-dns"
+
+  name                = "${var.name}-private-dns"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+  virtual_network_id  = module.network.vnet_id
+}
+
+module "rbac" {
+  source = "../modules/rbac"
+
+  name                = "${var.name}-rbac"
+  resource_group_name = azurerm_resource_group.production.name
+
+  aks_identity_id = module.aks.identity_id
+  acr_id          = module.container_registry.id
+  keyvault_id     = module.keyvault.id
+}
