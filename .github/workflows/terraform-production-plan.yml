@@ -1,0 +1,36 @@
+name: Terraform Production Plan
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+      - 'scripts/terraform/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    name: Terraform Production Plan
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive infrastructure/terraform
+
+      - name: Terraform Validate
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform plan -out=tfplan
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-tfplan
+          path: infrastructure/terraform/environments/production/tfplan
