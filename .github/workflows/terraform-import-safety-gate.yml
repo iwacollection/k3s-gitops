@@ -1,0 +1,29 @@
+name: Terraform Import Safety Gate
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+      - 'scripts/terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  import-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Terraform setup
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform validation
+        run: |
+          terraform fmt -check -recursive infrastructure/terraform
+          terraform validate
+
+      - name: Import safety reminder
+        run: |
+          echo "Production adoption requires terraform plan JSON validation."
+          echo "delete and replace operations must be reviewed before apply."
