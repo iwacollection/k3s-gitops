@@ -29,3 +29,18 @@ variable "network_policy" {
   type    = string
   default = "azure"
 }
+
+variable "azure_rbac_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "workload_identity_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "oidc_issuer_enabled" {
+  type    = bool
+  default = true
+}
