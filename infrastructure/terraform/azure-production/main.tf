@@ -52,3 +52,16 @@ module "database" {
   resource_group_name = azurerm_resource_group.production.name
   location            = azurerm_resource_group.production.location
 }
+
+module "aks" {
+  source = "../modules/aks"
+
+  name                = "${var.name}-aks"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+
+  private_cluster_enabled      = true
+  azure_rbac_enabled           = true
+  workload_identity_enabled    = true
+  oidc_issuer_enabled          = true
+}
