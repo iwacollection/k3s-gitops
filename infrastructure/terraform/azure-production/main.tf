@@ -117,8 +117,13 @@ module "private_dns" {
   source = "../modules/private-dns"
   name = "${var.name}-private-dns"
   resource_group_name = azurerm_resource_group.production.name
-  location = azurerm_resource_group.production.location
   virtual_network_id = module.network.vnet_id
+  private_dns_zones = [
+    "privatelink.azurecr.io",
+    "privatelink.vaultcore.azure.net",
+    "privatelink.postgres.database.azure.com",
+    "privatelink.redis.cache.windows.net"
+  ]
 }
 
 module "postgres_private_endpoint" {
@@ -128,6 +133,7 @@ module "postgres_private_endpoint" {
   resource_group_name = azurerm_resource_group.production.name
   subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.database.id
+  private_dns_zone_ids = [module.private_dns.postgres_private_dns_zone_id]
 }
 
 module "redis_private_endpoint" {
@@ -137,6 +143,7 @@ module "redis_private_endpoint" {
   resource_group_name = azurerm_resource_group.production.name
   subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.managed_redis.id
+  private_dns_zone_ids = [module.private_dns.redis_private_dns_zone_id]
 }
 
 module "acr_private_endpoint" {
@@ -146,6 +153,7 @@ module "acr_private_endpoint" {
   resource_group_name = azurerm_resource_group.production.name
   subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.container_registry.id
+  private_dns_zone_ids = [module.private_dns.acr_private_dns_zone_id]
 }
 
 module "keyvault_private_endpoint" {
@@ -155,6 +163,7 @@ module "keyvault_private_endpoint" {
   resource_group_name = azurerm_resource_group.production.name
   subnet_id = module.network.private_endpoint_subnet_id
   resource_id = module.keyvault.id
+  private_dns_zone_ids = [module.private_dns.keyvault_private_dns_zone_id]
 }
 
 module "rbac" {
