@@ -21,3 +21,8 @@ variable "address_space" {
 variable "subnet_prefixes" {
   type = list(string)
 }
+
+variable "private_endpoint_subnet_prefixes" {
+  type = list(string)
+  default = ["10.10.2.0/24"]
+}
