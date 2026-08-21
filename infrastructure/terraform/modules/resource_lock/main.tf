@@ -21,6 +21,11 @@ variable "lock_level" {
   description = "Azure lock level"
   type        = string
   default     = "CanNotDelete"
+
+  validation {
+    condition     = contains(["CanNotDelete", "ReadOnly"], var.lock_level)
+    error_message = "lock_level must be CanNotDelete or ReadOnly."
+  }
 }
 
 resource "azurerm_management_lock" "production" {
@@ -31,5 +36,6 @@ resource "azurerm_management_lock" "production" {
 }
 
 output "lock_id" {
-  value = azurerm_management_lock.production.id
+  description = "Azure management lock id"
+  value       = azurerm_management_lock.production.id
 }
