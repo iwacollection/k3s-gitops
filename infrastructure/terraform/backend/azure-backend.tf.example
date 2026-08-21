@@ -1,10 +1,11 @@
 terraform {
   backend "azurerm" {
-    # Configure through environment specific backend config.
-    # Required values:
-    # resource_group_name
-    # storage_account_name
-    # container_name
-    # key
+    # Production Azure Storage backend
+    # Configure real values through GitHub Actions backend-config.
+    # State is stored remotely with Azure Blob locking.
+    resource_group_name  = "tfstate-rg"
+    storage_account_name = "tfstateaccount"
+    container_name       = "tfstate"
+    key                  = "azure-production/terraform.tfstate"
   }
 }
