@@ -16,6 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
 
+    defaults:
+      run:
+        working-directory: infrastructure/terraform/azure-production
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,20 +32,16 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init
-        working-directory: infrastructure/terraform/azure-production
-        run: terraform init
-
       - name: Terraform Format Check
-        working-directory: infrastructure/terraform/azure-production
         run: terraform fmt -check -recursive
 
+      - name: Terraform Init
+        run: terraform init
+
       - name: Terraform Validate
-        working-directory: infrastructure/terraform/azure-production
         run: terraform validate
 
       - name: Terraform Plan
-        working-directory: infrastructure/terraform/azure-production
         run: terraform plan -out=tfplan
 
       - name: Upload Terraform Plan
@@ -52,5 +52,4 @@ jobs:
 
       - name: Terraform Apply
         if: github.event.inputs.environment == 'production'
-        working-directory: infrastructure/terraform/azure-production
         run: terraform apply tfplan
