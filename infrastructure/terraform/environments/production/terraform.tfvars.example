@@ -1,0 +1,6 @@
+environment = "production"
+
+# Production resources should be imported before apply when they already exist.
+# Review terraform plan and ensure unexpected destroy/replace is zero.
+
+location = "<azure-region>"
