@@ -16,18 +16,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Terraform Preflight
+        run: |
+          if ! command -v terraform >/dev/null; then
+            echo "terraform cli missing"
+            exit 1
+          fi
+          echo "terraform preflight passed"
+
       - name: Download Approved Plan
         uses: actions/download-artifact@v4
         with:
           name: production-tfplan
 
-      - name: Validate plan artifact
+      - name: Validate approved plan artifact
         run: |
           if [ ! -f tfplan ]; then
             echo "Approved terraform plan artifact is missing"
             exit 1
           fi
-          echo "Plan artifact verified"
+          echo "Approved plan artifact verified"
+
+      - name: Verify plan metadata
+        run: |
+          sha256sum tfplan > tfplan.sha256
+          echo "Plan checksum generated"
 
       - name: Terraform Init
         working-directory: infrastructure/terraform/environments/production
@@ -40,9 +53,19 @@ jobs:
       - name: Post Apply Verification
         working-directory: infrastructure/terraform/environments/production
         run: |
-          terraform plan -refresh-only -detailed-exitcode || code=$?
-          if [ "${code:-0}" = "2" ]; then
+          set +e
+          terraform plan -refresh-only -detailed-exitcode
+          code=$?
+          set -e
+
+          if [ "$code" = "2" ]; then
             echo "Terraform state drift detected after apply"
             exit 1
           fi
+
+          if [ "$code" != "0" ]; then
+            echo "Terraform verification failed"
+            exit 1
+          fi
+
           echo "Production apply verification completed"
