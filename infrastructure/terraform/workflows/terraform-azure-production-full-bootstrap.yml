@@ -6,7 +6,7 @@ on:
       apply:
         description: 'Run terraform apply after plan'
         required: true
-        default: 'true'
+        default: 'false'
 
 permissions:
   id-token: write
@@ -20,7 +20,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: infrastructure/terraform/azure-production
+        working-directory: infrastructure/terraform/environments/production
 
     steps:
       - name: Checkout
