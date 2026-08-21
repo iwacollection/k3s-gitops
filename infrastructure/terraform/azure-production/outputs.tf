@@ -39,3 +39,18 @@ output "keyvault_id" {
   description = "Azure Key Vault resource id"
   value       = module.keyvault.id
 }
+
+output "network_id" {
+  description = "Azure VNet resource id"
+  value       = module.network.vnet_id
+}
+
+output "postgres_private_endpoint_id" {
+  description = "PostgreSQL private endpoint resource id"
+  value       = module.postgres_private_endpoint.id
+}
+
+output "redis_private_endpoint_id" {
+  description = "Redis private endpoint resource id"
+  value       = module.redis_private_endpoint.id
+}
