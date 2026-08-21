@@ -44,6 +44,14 @@ module "network_security" {
   location            = azurerm_resource_group.production.location
 }
 
+module "nat_gateway" {
+  source = "../modules/nat-gateway"
+
+  name                = "${var.name}-nat"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+}
+
 module "load_balancer" {
   source = "../modules/load-balancer"
 
@@ -68,10 +76,10 @@ module "aks" {
   resource_group_name = azurerm_resource_group.production.name
   location            = azurerm_resource_group.production.location
 
-  private_cluster_enabled      = true
-  azure_rbac_enabled           = true
-  workload_identity_enabled    = true
-  oidc_issuer_enabled          = true
+  private_cluster_enabled   = true
+  azure_rbac_enabled        = true
+  workload_identity_enabled = true
+  oidc_issuer_enabled       = true
 }
 
 module "container_registry" {
