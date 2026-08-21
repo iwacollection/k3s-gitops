@@ -6,9 +6,13 @@ on:
       - 'infrastructure/terraform/**'
       - '.github/workflows/**terraform**'
 
+permissions:
+  contents: read
+
 jobs:
   risk-gate:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,11 +28,18 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-      - name: Validate terraform plan artifact requirement
+      - name: Verify production protection checks exist
         run: |
-          test -f infrastructure/terraform/policy/terraform-plan-risk-check.py || exit 1
-          echo "Production plan risk checker is required"
+          test -f infrastructure/terraform/policy/terraform-plan-risk-check.py
+          test -f infrastructure/terraform/policy/destroy-replace-risk-check.py
 
-      - name: Production safety rules
+      - name: Block unsafe terraform settings
         run: |
-          echo "Required flow: plan artifact -> risk check -> approval -> apply"
+          if grep -R "prevent_destroy[[:space:]]*=[[:space:]]*false" infrastructure/terraform; then
+            echo "prevent_destroy=false is forbidden in production"
+            exit 1
+          fi
+
+      - name: Production flow enforcement
+        run: |
+          echo "Required flow: plan artifact -> risk check -> approval -> apply approved plan"
