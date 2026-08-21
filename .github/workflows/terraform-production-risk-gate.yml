@@ -12,13 +12,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
       - name: Terraform format check
         run: terraform fmt -check -recursive infrastructure/terraform
 
-      - name: Terraform validation placeholder
+      - name: Terraform validation
         run: |
-          echo "Run terraform init/validate in target environment"
+          cd infrastructure/terraform
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate terraform plan artifact requirement
+        run: |
+          test -f infrastructure/terraform/policy/terraform-plan-risk-check.py || exit 1
+          echo "Production plan risk checker is required"
 
       - name: Production safety rules
         run: |
-          echo "Require plan artifact, approval and reviewed apply"
+          echo "Required flow: plan artifact -> risk check -> approval -> apply"
