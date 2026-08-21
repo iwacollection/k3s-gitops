@@ -3,6 +3,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   resource_group_name    = var.resource_group_name
   location               = var.location
   version                = "16"
+
   administrator_login     = var.admin_username
   administrator_password = var.admin_password
 
@@ -12,6 +13,8 @@ resource "azurerm_postgresql_flexible_server" "main" {
   backup_retention_days = 14
 
   public_network_access_enabled = false
+
+  zone = "1"
 
   high_availability {
     mode = "ZoneRedundant"
