@@ -36,6 +36,14 @@ module "network" {
   address_space       = var.address_space
 }
 
+module "network_security" {
+  source = "../modules/network-security"
+
+  name                = "${var.name}-nsg"
+  resource_group_name = azurerm_resource_group.production.name
+  location            = azurerm_resource_group.production.location
+}
+
 module "load_balancer" {
   source = "../modules/load-balancer"
 
