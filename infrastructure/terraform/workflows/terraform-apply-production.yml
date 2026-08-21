@@ -6,22 +6,38 @@ on:
       environment:
         required: true
         default: production
+      apply:
+        required: true
+        default: "false"
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  apply:
+  terraform:
     environment: production
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: infrastructure/terraform/environments/${{ inputs.environment }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Terraform Init
         run: terraform init
-        working-directory: infrastructure/terraform/environments/${{ inputs.environment }}
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
+        if: inputs.apply == 'true'
         run: terraform apply -auto-approve tfplan
-        working-directory: infrastructure/terraform/environments/${{ inputs.environment }}
