@@ -32,9 +32,23 @@ jobs:
         working-directory: infrastructure/terraform/azure-production
         run: terraform init
 
+      - name: Terraform Format Check
+        working-directory: infrastructure/terraform/azure-production
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        working-directory: infrastructure/terraform/azure-production
+        run: terraform validate
+
       - name: Terraform Plan
         working-directory: infrastructure/terraform/azure-production
         run: terraform plan -out=tfplan
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-production-tfplan
+          path: infrastructure/terraform/azure-production/tfplan
 
       - name: Terraform Apply
         if: github.event.inputs.environment == 'production'
