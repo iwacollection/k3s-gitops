@@ -3,7 +3,7 @@ name: Terraform Security Gate
 on:
   pull_request:
     paths:
-      - 'infra/**'
+      - 'infrastructure/terraform/**'
       - '.github/workflows/**'
 
 permissions:
@@ -22,15 +22,23 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive infra
+        run: terraform fmt -check -recursive infrastructure/terraform
 
       - name: Terraform Init
-        working-directory: infra/environments/dev
+        working-directory: infrastructure/terraform/azure-production
         run: terraform init -backend=false
 
       - name: Terraform Validate
-        working-directory: infra/environments/dev
+        working-directory: infrastructure/terraform/azure-production
         run: terraform validate
 
       - name: Run tfsec
         uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infrastructure/terraform
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/terraform
+          framework: terraform
