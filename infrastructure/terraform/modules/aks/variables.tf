@@ -20,6 +20,31 @@ variable "vm_size" {
   default = "Standard_D2s_v5"
 }
 
+variable "enable_auto_scaling" {
+  type    = bool
+  default = true
+}
+
+variable "min_count" {
+  type    = number
+  default = 2
+}
+
+variable "max_count" {
+  type    = number
+  default = 5
+}
+
+variable "max_surge" {
+  type    = string
+  default = "33%"
+}
+
+variable "availability_zones" {
+  type    = list(string)
+  default = ["1", "2", "3"]
+}
+
 variable "private_cluster_enabled" {
   type    = bool
   default = false
