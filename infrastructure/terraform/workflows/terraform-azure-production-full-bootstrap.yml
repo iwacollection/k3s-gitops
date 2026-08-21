@@ -1,0 +1,46 @@
+name: Terraform Azure Production Full Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Run terraform apply after plan'
+        required: true
+        default: 'true'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform-bootstrap:
+    name: Terraform Azure Production Bootstrap
+    runs-on: ubuntu-latest
+    environment: production
+
+    defaults:
+      run:
+        working-directory: infrastructure/terraform/azure-production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.apply == 'true'
+        run: terraform apply -auto-approve tfplan
