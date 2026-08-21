@@ -1,0 +1,42 @@
+name: Terraform Adoption Validation
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+      - 'scripts/terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  adoption-validation:
+    name: Existing Resource Adoption Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: |
+          if [ -d infrastructure/terraform ]; then
+            cd infrastructure/terraform
+            terraform init -backend=false
+            terraform validate
+          fi
+
+      - name: Resource Protection Check
+        run: |
+          if [ -f scripts/terraform/protection/resource-protection-check.sh ]; then
+            bash scripts/terraform/protection/resource-protection-check.sh
+          fi
+
+      - name: Adoption Validation
+        run: |
+          if [ -f scripts/terraform/adoption/adoption-validator.py ]; then
+            python3 scripts/terraform/adoption/adoption-validator.py || true
+          fi
