@@ -1,0 +1,24 @@
+environment = "production"
+
+location = "eastus"
+
+resource_group_name = "rg-k3s-production"
+
+vnet_address_space = [
+  "10.20.0.0/16"
+]
+
+aks_subnet_prefix = "10.20.1.0/24"
+
+private_endpoint_subnet_prefix = "10.20.2.0/24"
+
+kubernetes_version = "1.30"
+
+node_count = 3
+
+postgres_version = "16"
+
+common_tags = {
+  environment = "production"
+  managed_by  = "terraform"
+}
