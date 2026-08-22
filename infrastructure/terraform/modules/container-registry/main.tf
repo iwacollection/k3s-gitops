@@ -5,6 +5,11 @@ resource "azurerm_container_registry" "this" {
   sku                           = var.sku
   admin_enabled                 = false
   public_network_access_enabled = var.public_network_access_enabled
+
+  zone_redundancy_enabled = true
+
+  anonymous_pull_enabled = false
+  data_endpoint_enabled  = true
 }
 
 output "id" {
