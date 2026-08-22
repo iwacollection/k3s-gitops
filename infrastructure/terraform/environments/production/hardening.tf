@@ -15,12 +15,11 @@ resource "azurerm_user_assigned_identity" "workload" {
 }
 
 resource "azurerm_federated_identity_credential" "workload" {
-  name                = "k3s-production-workload-federation"
-  resource_group_name = var.resource_group_name
-  parent_id           = azurerm_user_assigned_identity.workload.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = module.aks.oidc_issuer_url
-  subject             = "system:serviceaccount:platform:k3s-workload"
+  name      = "k3s-production-workload-federation"
+  parent_id = azurerm_user_assigned_identity.workload.id
+  audience  = ["api://AzureADTokenExchange"]
+  issuer    = module.aks.oidc_issuer_url
+  subject   = "system:serviceaccount:platform:k3s-workload"
 }
 
 resource "azurerm_role_assignment" "workload_key_vault_secrets" {
