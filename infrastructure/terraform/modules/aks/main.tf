@@ -64,6 +64,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "workload" {
   node_count            = var.user_node_count
   vnet_subnet_id        = var.subnet_id
   os_disk_size_gb       = 64
+  os_disk_type          = "Ephemeral"
   mode                  = "User"
   zones                 = var.availability_zones
   max_pods              = 50
