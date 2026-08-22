@@ -7,7 +7,7 @@ resource "azurerm_redis_cache" "this" {
   family   = var.sku_name == "Premium" ? "P" : "C"
   sku_name = var.sku_name
 
-  non_ssl_port_enabled         = false
-  minimum_tls_version          = "1.2"
+  non_ssl_port_enabled          = false
+  minimum_tls_version           = "1.2"
   public_network_access_enabled = var.public_network_access_enabled
 }
