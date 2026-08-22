@@ -67,6 +67,10 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: AKS Compute Quota Preflight
+        shell: bash
+        run: bash ./ensure-aks-quota.sh
+
       - name: PostgreSQL Capability Preflight
         shell: bash
         run: bash ./check-postgres-capability.sh
@@ -159,9 +163,6 @@ jobs:
               return 0
             fi
 
-            # Defender pricing resources are subscription singletons. Azure can
-            # already have them at Free or Standard even when Terraform state
-            # does not, so adopt rather than attempting a conflicting create.
             az security pricing show --name "$pricing_name" --output none
             terraform import -input=false "$address" "$resource_id"
           }
