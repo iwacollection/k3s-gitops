@@ -62,27 +62,15 @@ jobs:
           test -n "$TF_VAR_database_admin_username" || { echo 'TF_DATABASE_ADMIN_USERNAME is missing'; exit 1; }
           test -n "$TF_VAR_database_admin_password" || { echo 'TF_DATABASE_ADMIN_PASSWORD is missing'; exit 1; }
 
-      - name: Azure Login OIDC with Quota Identity
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: AKS Compute Quota Preflight
-        shell: bash
-        run: bash ./ensure-aks-quota.sh
-
-      - name: Azure Login OIDC with Apply Identity
+      # The Apply identity already has User Access Administrator. Use it first
+      # to converge the subscription-scoped quota RBAC through Terraform. This
+      # avoids permanently widening the normal Plan identity outside IaC.
+      - name: Azure Login OIDC with Apply Identity for IaC bootstrap
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: PostgreSQL Capability Preflight
-        shell: bash
-        run: bash ./check-postgres-capability.sh
 
       - name: Bootstrap Terraform state backend
         shell: bash
@@ -154,6 +142,69 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Terraform Quota RBAC Bootstrap Plan
+        run: terraform plan -input=false -target=azurerm_role_assignment.quota_request_operator -out=quota-rbac.tfplan
+
+      - name: Reject destructive quota bootstrap plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform show -json quota-rbac.tfplan > quota-rbac.tfplan.json
+          DELETE_COUNT="$(jq '[.resource_changes[]? | select((.change.actions // []) | index("delete"))] | length' quota-rbac.tfplan.json)"
+          echo "Quota bootstrap delete/replacement actions: $DELETE_COUNT"
+          if [ "$DELETE_COUNT" -ne 0 ]; then
+            echo '::error::Destructive actions detected in quota RBAC bootstrap. Refusing to mutate subscription RBAC.'
+            terraform show -no-color quota-rbac.tfplan
+            exit 1
+          fi
+
+      - name: Terraform Apply Quota RBAC Bootstrap
+        run: terraform apply -input=false -auto-approve quota-rbac.tfplan
+
+      - name: Verify Terraform-managed quota RBAC
+        shell: bash
+        run: |
+          set -euo pipefail
+          QUOTA_PRINCIPAL_ID="$(terraform output -raw quota_identity_principal_id)"
+          SUBSCRIPTION_SCOPE="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
+          for attempt in $(seq 1 12); do
+            COUNT="$(az role assignment list \
+              --assignee-object-id "$QUOTA_PRINCIPAL_ID" \
+              --scope "$SUBSCRIPTION_SCOPE" \
+              --query "[?roleDefinitionName=='Quota Request Operator'] | length(@)" \
+              --output tsv 2>/dev/null || echo 0)"
+            if [ "${COUNT:-0}" -ge 1 ]; then
+              echo "Quota Request Operator assignment is visible for principal ${QUOTA_PRINCIPAL_ID}."
+              exit 0
+            fi
+            echo "Waiting for quota RBAC assignment visibility (${attempt}/12)."
+            sleep 10
+          done
+          echo '::error::Terraform created the quota RBAC assignment but it is not visible yet.'
+          exit 1
+
+      - name: Azure Login OIDC with Quota Identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: AKS Compute Quota Preflight and Recovery
+        shell: bash
+        run: bash ./ensure-aks-quota.sh
+
+      - name: Azure Login OIDC with Apply Identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: PostgreSQL Capability Preflight
+        shell: bash
+        run: bash ./check-postgres-capability.sh
 
       - name: Adopt subscription Defender pricing into Terraform state
         shell: bash
@@ -256,6 +307,9 @@ jobs:
           az policy assignment show --name k3s-audit-environment-tag --scope "$RG_ID" --output none
           az security pricing show --name Containers --output none
           az security pricing show --name KeyVaults --output none
+
+          QUOTA_PRINCIPAL_ID="$(terraform output -raw quota_identity_principal_id)"
+          test "$(az role assignment list --assignee-object-id "$QUOTA_PRINCIPAL_ID" --scope "/subscriptions/${AZURE_SUBSCRIPTION_ID}" --query "[?roleDefinitionName=='Quota Request Operator'] | length(@)" --output tsv)" -ge 1
 
           az aks get-credentials --resource-group "$RG" --name k3s-production-aks --admin --overwrite-existing
           kubectl wait --for=condition=Ready nodes --all --timeout=10m
