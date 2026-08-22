@@ -3,7 +3,12 @@ set -euo pipefail
 
 REGION="${AKS_REGION:-eastus}"
 VM_SIZE="${AKS_VM_SIZE:-Standard_D2s_v7}"
-HEADROOM_VCPUS="${AKS_QUOTA_HEADROOM_VCPUS:-8}"
+# Production convergence can temporarily run the old system pool, a full
+# replacement `systemtmp` pool and the new workload pool at the same time.
+# Eight vCPUs was enough for steady state but not for the HA/AZ rotation peak.
+# Keep a 16-vCPU buffer so both regional and VM-family quotas cover the
+# transition without weakening the requested HA topology.
+HEADROOM_VCPUS="${AKS_QUOTA_HEADROOM_VCPUS:-16}"
 RBAC_RETRY_ATTEMPTS="${AKS_QUOTA_RBAC_RETRY_ATTEMPTS:-12}"
 EFFECTIVE_RETRY_ATTEMPTS="${AKS_QUOTA_EFFECTIVE_RETRY_ATTEMPTS:-30}"
 SUBSCRIPTION_ID="$(printf '%s' "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}" | tr -d '\r\n')"
@@ -42,9 +47,6 @@ ensure_quota_provider() {
       fi
     fi
 
-    # A newly-created Quota Request Operator assignment can take a short time
-    # to propagate through Azure RBAC. Retry instead of failing the Apply run
-    # immediately after the Terraform bootstrap assignment is created.
     sleep 15
   done
 
@@ -68,8 +70,6 @@ request_quota() {
 
   echo "${localized_name}: requesting quota increase to ${target}."
 
-  # Azure Quota is a GA CLI extension. Keep this explicit so hosted runner
-  # image changes do not make quota recovery depend on implicit installation.
   az extension add --name quota --upgrade --only-show-errors >/dev/null
   ensure_quota_provider
 
@@ -95,9 +95,6 @@ request_quota() {
     return 1
   fi
 
-  # Quota requests can be asynchronous. Keep the workflow alive while Azure
-  # processes an automatically approvable request instead of immediately
-  # falling through to an AKS VMSS failure.
   for attempt in $(seq 1 "$EFFECTIVE_RETRY_ATTEMPTS"); do
     effective_limit="$(az quota show \
       --resource-name "$resource_name" \
