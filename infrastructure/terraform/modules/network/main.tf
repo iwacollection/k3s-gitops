@@ -24,3 +24,10 @@ resource "azurerm_subnet" "private_endpoints" {
   address_prefixes                  = var.private_endpoint_subnet_prefixes
   private_endpoint_network_policies = "Disabled"
 }
+
+resource "azurerm_subnet" "ingress" {
+  name                 = "${var.name}-ingress"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = var.ingress_subnet_prefixes
+}

@@ -37,3 +37,12 @@ module "managed_redis" {
   location            = var.location
   resource_group_name = var.resource_group_name
 }
+
+module "application_gateway_waf" {
+  source = "../../modules/application-gateway-waf"
+
+  name                = "k3s-production-appgw-waf"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  subnet_id           = module.network.ingress_subnet_id
+}
