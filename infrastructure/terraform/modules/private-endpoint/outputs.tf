@@ -7,5 +7,5 @@ output "private_ip_address" {
 }
 
 output "private_dns_zone_id" {
-  value = azurerm_private_dns_zone.this.id
+  value = var.private_dns_zone_id
 }
