@@ -43,5 +43,10 @@ variable "storage_mb" {
 
 variable "backup_retention_days" {
   type    = number
-  default = 7
+  default = 35
+}
+
+variable "public_network_access_enabled" {
+  type    = bool
+  default = false
 }

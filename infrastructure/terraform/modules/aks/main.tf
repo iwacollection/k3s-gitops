@@ -16,6 +16,10 @@ resource "azurerm_kubernetes_cluster" "this" {
     vm_size         = var.vm_size
     vnet_subnet_id  = var.subnet_id
     os_disk_size_gb = 64
+    zones           = var.availability_zones
+    node_labels = {
+      "kubernetes.azure.com/mode" = "system"
+    }
   }
 
   identity {
@@ -36,6 +40,21 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 }
 
+resource "azurerm_kubernetes_cluster_node_pool" "workload" {
+  name                  = "workload"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
+  vm_size               = var.user_vm_size
+  node_count            = var.user_node_count
+  vnet_subnet_id        = var.subnet_id
+  os_disk_size_gb       = 64
+  mode                  = "User"
+  zones                 = var.availability_zones
+
+  node_labels = {
+    "workload" = "general"
+  }
+}
+
 output "id" {
   value = azurerm_kubernetes_cluster.this.id
 }
@@ -50,4 +69,12 @@ output "fqdn" {
 
 output "kubelet_object_id" {
   value = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
+}
+
+output "oidc_issuer_url" {
+  value = azurerm_kubernetes_cluster.this.oidc_issuer_url
+}
+
+output "workload_node_pool_id" {
+  value = azurerm_kubernetes_cluster_node_pool.workload.id
 }

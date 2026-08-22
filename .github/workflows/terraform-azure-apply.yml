@@ -161,15 +161,56 @@ jobs:
           az network nsg show --resource-group "$RG" --name k3s-production-aks-nsg --output none
           az network nat gateway show --resource-group "$RG" --name k3s-production-nat --output none
           az aks show --resource-group "$RG" --name k3s-production-aks --output none
+          az aks nodepool show --resource-group "$RG" --cluster-name k3s-production-aks --name system --output none
+          az aks nodepool show --resource-group "$RG" --cluster-name k3s-production-aks --name workload --output none
           az network lb show --resource-group "$RG" --name k3s-production-lb --output none
           az redis show --resource-group "$RG" --name k3s-production-redis --output none
           az postgres flexible-server show --resource-group "$RG" --name k3s-production-postgres --output none
           az monitor log-analytics workspace show --resource-group "$RG" --workspace-name k3s-production-law --output none
 
-          ACR_COUNT="$(az acr list --resource-group "$RG" --query "[?starts_with(name, 'k3sprodacr')] | length(@)" --output tsv)"
-          KV_COUNT="$(az keyvault list --resource-group "$RG" --query "[?starts_with(name, 'k3s-prod-kv-')] | length(@)" --output tsv)"
-          test "$ACR_COUNT" -ge 1
-          test "$KV_COUNT" -ge 1
+          ACR_NAME="$(az acr list --resource-group "$RG" --query "[?starts_with(name, 'k3sprodacr')].name | [0]" --output tsv)"
+          KV_NAME="$(az keyvault list --resource-group "$RG" --query "[?starts_with(name, 'k3s-prod-kv-')].name | [0]" --output tsv)"
+          test -n "$ACR_NAME"
+          test -n "$KV_NAME"
+
+          az network private-endpoint show --resource-group "$RG" --name k3s-production-acr-pe --output none
+          az network private-endpoint show --resource-group "$RG" --name k3s-production-kv-pe --output none
+          az network private-endpoint show --resource-group "$RG" --name k3s-production-redis-pe --output none
+          az network private-endpoint show --resource-group "$RG" --name k3s-production-postgres-pe --output none
+
+          az network private-dns zone show --resource-group "$RG" --name privatelink.azurecr.io --output none
+          az network private-dns zone show --resource-group "$RG" --name privatelink.vaultcore.azure.net --output none
+          az network private-dns zone show --resource-group "$RG" --name privatelink.redis.cache.windows.net --output none
+          az network private-dns zone show --resource-group "$RG" --name privatelink.postgres.database.azure.com --output none
+
+          az identity show --resource-group "$RG" --name k3s-production-workload-identity --output none
+          az identity federated-credential show \
+            --resource-group "$RG" \
+            --identity-name k3s-production-workload-identity \
+            --name k3s-production-workload-federation \
+            --output none
+
+          KUBELET_OBJECT_ID="$(az aks show --resource-group "$RG" --name k3s-production-aks --query identityProfile.kubeletidentity.objectId --output tsv)"
+          ACR_ID="$(az acr show --resource-group "$RG" --name "$ACR_NAME" --query id --output tsv)"
+          WI_PRINCIPAL_ID="$(az identity show --resource-group "$RG" --name k3s-production-workload-identity --query principalId --output tsv)"
+          KV_ID="$(az keyvault show --resource-group "$RG" --name "$KV_NAME" --query id --output tsv)"
+
+          test "$(az role assignment list --assignee "$KUBELET_OBJECT_ID" --scope "$ACR_ID" --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)" -ge 1
+          test "$(az role assignment list --assignee "$WI_PRINCIPAL_ID" --scope "$KV_ID" --query "[?roleDefinitionName=='Key Vault Secrets User'] | length(@)" --output tsv)" -ge 1
+
+          az monitor activity-log alert show --resource-group "$RG" --name k3s-production-administrative-errors --output none
+          az resource show --ids "$(terraform output -raw backup_vault_id)" --output none
+
+          RG_ID="$(az group show --name "$RG" --query id --output tsv)"
+          az policy assignment show --name k3s-audit-environment-tag --scope "$RG_ID" --output none
+          az security pricing show --name Containers --output none
+          az security pricing show --name KeyVaults --output none
+
+          az aks get-credentials --resource-group "$RG" --name k3s-production-aks --admin --overwrite-existing
+          kubectl wait --for=condition=Ready nodes --all --timeout=10m
+          NODE_COUNT="$(kubectl get nodes --no-headers | wc -l)"
+          test "$NODE_COUNT" -ge 4
+          kubectl get nodes -L agentpool,topology.kubernetes.io/zone
 
           az resource list \
             --resource-group "$RG" \

@@ -12,5 +12,10 @@ variable "resource_group_name" {
 
 variable "sku" {
   type    = string
-  default = "Standard"
+  default = "Premium"
+}
+
+variable "public_network_access_enabled" {
+  type    = bool
+  default = false
 }
