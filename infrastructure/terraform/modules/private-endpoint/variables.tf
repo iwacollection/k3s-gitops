@@ -14,10 +14,6 @@ variable "subnet_id" {
   type = string
 }
 
-variable "virtual_network_id" {
-  type = string
-}
-
 variable "private_connection_resource_id" {
   type = string
 }
@@ -26,6 +22,6 @@ variable "subresource_names" {
   type = list(string)
 }
 
-variable "private_dns_zone_name" {
+variable "private_dns_zone_id" {
   type = string
 }
