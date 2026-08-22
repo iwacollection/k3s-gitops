@@ -8,23 +8,18 @@ variable "resource_group_name" {
   default = "rg-k3s-production"
 }
 
-variable "virtual_network_id" {
-  type = string
-}
-
 module "private_dns" {
   source = "../../modules/private-dns"
 
-  name_prefix          = "k3s-production"
   resource_group_name = var.resource_group_name
-  virtual_network_id  = var.virtual_network_id
+  virtual_network_id  = module.network.vnet_id
 
-  zones = [
-    "privatelink.azurecr.io",
-    "privatelink.vaultcore.azure.net",
-    "privatelink.redis.cache.windows.net",
-    "privatelink.postgres.database.azure.com"
-  ]
+  zones = {
+    "privatelink.azurecr.io"                  = "k3s-production-acr-pe-dns-link"
+    "privatelink.vaultcore.azure.net"         = "k3s-production-kv-pe-dns-link"
+    "privatelink.redis.cache.windows.net"     = "k3s-production-redis-pe-dns-link"
+    "privatelink.postgres.database.azure.com" = "k3s-production-postgres-pe-dns-link"
+  }
 }
 
 module "load_balancer" {
