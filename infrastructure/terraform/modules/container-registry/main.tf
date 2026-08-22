@@ -10,6 +10,14 @@ resource "azurerm_container_registry" "this" {
 
   anonymous_pull_enabled = false
   data_endpoint_enabled  = true
+
+  dynamic "georeplications" {
+    for_each = var.geo_replication_locations
+
+    content {
+      location = georeplications.value
+    }
+  }
 }
 
 output "id" {
