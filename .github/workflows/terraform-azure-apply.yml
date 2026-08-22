@@ -1,0 +1,158 @@
+name: Terraform Azure Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Terraform environment
+        required: true
+        default: production
+  push:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/terraform/environments/production/**'
+      - 'infrastructure/terraform/modules/load-balancer/**'
+      - 'infrastructure/terraform/modules/managed-redis/**'
+      - 'infrastructure/terraform/modules/database/**'
+      - '.github/workflows/terraform-azure-apply.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-azure-production-apply
+  cancel-in-progress: false
+
+jobs:
+  terraform-apply:
+    name: Terraform Apply Azure
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: '0'
+      AZURE_APPLY_CLIENT_ID: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_database_admin_username: ${{ secrets.TF_DATABASE_ADMIN_USERNAME }}
+      TF_VAR_database_admin_password: ${{ secrets.TF_DATABASE_ADMIN_PASSWORD }}
+
+    defaults:
+      run:
+        working-directory: infrastructure/terraform/environments/production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Validate required production secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_APPLY_CLIENT_ID" || { echo 'AZURE_APPLY_CLIENT_ID is missing'; exit 1; }
+          test -n "$AZURE_TENANT_ID" || { echo 'AZURE_TENANT_ID is missing'; exit 1; }
+          test -n "$AZURE_SUBSCRIPTION_ID" || { echo 'AZURE_SUBSCRIPTION_ID is missing'; exit 1; }
+          test -n "$TF_VAR_database_admin_username" || { echo 'TF_DATABASE_ADMIN_USERNAME is missing'; exit 1; }
+          test -n "$TF_VAR_database_admin_password" || { echo 'TF_DATABASE_ADMIN_PASSWORD is missing'; exit 1; }
+
+      - name: Azure Login OIDC with Apply Identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bootstrap Terraform state backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STATE_RG='rg-platform-cicd'
+          WORKLOAD_RG='rg-k3s-production'
+          LOCATION='eastus'
+          STATE_CONTAINER='tfstate'
+          STATE_KEY_NAME='k3s-production.tfstate'
+          SUB_COMPACT="${AZURE_SUBSCRIPTION_ID//-/}"
+          STATE_ACCOUNT="stk3stfstate${SUB_COMPACT:0:12}"
+          STATE_ACCOUNT="${STATE_ACCOUNT:0:24}"
+
+          az group show --name "$STATE_RG" --output none || { echo "Missing state resource group: $STATE_RG"; exit 1; }
+          az group show --name "$WORKLOAD_RG" --output none || { echo "Missing workload resource group: $WORKLOAD_RG"; exit 1; }
+
+          if ! az storage account show --resource-group "$STATE_RG" --name "$STATE_ACCOUNT" >/dev/null 2>&1; then
+            az storage account create \
+              --resource-group "$STATE_RG" \
+              --name "$STATE_ACCOUNT" \
+              --location "$LOCATION" \
+              --sku Standard_LRS \
+              --kind StorageV2 \
+              --min-tls-version TLS1_2 \
+              --allow-blob-public-access false \
+              --output none
+          fi
+
+          STATE_ACCESS_KEY="$(az storage account keys list \
+            --resource-group "$STATE_RG" \
+            --account-name "$STATE_ACCOUNT" \
+            --query '[0].value' \
+            --output tsv)"
+
+          echo "::add-mask::$STATE_ACCESS_KEY"
+
+          az storage container create \
+            --name "$STATE_CONTAINER" \
+            --account-name "$STATE_ACCOUNT" \
+            --account-key "$STATE_ACCESS_KEY" \
+            --output none
+
+          echo "TFSTATE_RESOURCE_GROUP=$STATE_RG" >> "$GITHUB_ENV"
+          echo "TFSTATE_STORAGE_ACCOUNT=$STATE_ACCOUNT" >> "$GITHUB_ENV"
+          echo "TFSTATE_CONTAINER=$STATE_CONTAINER" >> "$GITHUB_ENV"
+          echo "TFSTATE_KEY_NAME=$STATE_KEY_NAME" >> "$GITHUB_ENV"
+          echo "TFSTATE_ACCESS_KEY=$STATE_ACCESS_KEY" >> "$GITHUB_ENV"
+
+      - name: Generate AzureRM backend declaration
+        shell: bash
+        run: |
+          cat > backend.generated.tf <<'EOF'
+          terraform {
+            backend "azurerm" {}
+          }
+          EOF
+
+      - name: Terraform Init Remote State
+        shell: bash
+        run: |
+          terraform init -reconfigure -input=false \
+            -backend-config="resource_group_name=${TFSTATE_RESOURCE_GROUP}" \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${TFSTATE_KEY_NAME}" \
+            -backend-config="access_key=${TFSTATE_ACCESS_KEY}"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Apply Plan
+        run: terraform plan -input=false -out=apply.tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve apply.tfplan
+
+      - name: Terraform Outputs
+        run: terraform output
+
+      - name: Verify Azure resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          az resource list \
+            --resource-group rg-k3s-production \
+            --query "[].{name:name,type:type,location:location}" \
+            --output table
