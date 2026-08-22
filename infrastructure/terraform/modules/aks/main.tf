@@ -14,16 +14,16 @@ resource "azurerm_kubernetes_cluster" "this" {
   automatic_channel_upgrade = "stable"
 
   default_node_pool {
-    name                        = "system"
-    node_count                  = var.node_count
-    vm_size                     = var.vm_size
-    vnet_subnet_id              = var.subnet_id
-    os_disk_size_gb             = 64
-    os_sku                      = "AzureLinux"
-    zones                       = var.availability_zones
-    max_pods                    = 50
+    name                         = "system"
+    node_count                   = var.node_count
+    vm_size                      = var.vm_size
+    vnet_subnet_id               = var.subnet_id
+    os_disk_size_gb              = 64
+    os_sku                       = "AzureLinux"
+    zones                        = var.availability_zones
+    max_pods                     = 50
     only_critical_addons_enabled = true
-    temporary_name_for_rotation = "systemtmp"
+    temporary_name_for_rotation  = "systemtmp"
 
     upgrade_settings {
       max_surge                     = "10%"
