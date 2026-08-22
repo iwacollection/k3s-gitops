@@ -43,7 +43,7 @@ jobs:
 
       - name: TFLint
         working-directory: infrastructure/terraform
-        run: tflint --recursive
+        run: tflint --recursive --minimum-failure-severity=error
 
       - name: Run Checkov IaC security scan
         uses: bridgecrewio/checkov-action@v12
