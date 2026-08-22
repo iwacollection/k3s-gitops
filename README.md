@@ -1,45 +1,70 @@
 # Azure Production Terraform Stack
 
-## Purpose
+## Active stack
 
-Create the production Azure foundation through Terraform.
+The production entrypoint used by GitHub Actions is:
 
-## Target Architecture
+`infrastructure/terraform/environments/production`
 
-- Resource Group
-- VNet / Subnet
-- NSG
-- NAT Gateway
-- AKS
-- ACR
-- Load Balancer / Application Gateway
+Reusable modules live under:
+
+`infrastructure/terraform/modules`
+
+The root-level Terraform files are an earlier architecture scaffold and are not used by the production Plan/Apply workflows.
+
+## Managed production architecture
+
+The active stack manages and verifies:
+
+- Azure Load Balancer + Public IP
 - PostgreSQL Flexible Server
-- Key Vault
-- Monitoring
+- Azure Cache for Redis
+- Virtual Network
+  - AKS subnet
+  - Private-endpoint subnet reserved for later private connectivity
+- Network Security Group
+- NAT Gateway + Public IP
+- Azure Kubernetes Service (AKS)
+  - Azure CNI
+  - OIDC issuer
+  - Workload Identity
+  - Log Analytics / Container Insights integration
+- Azure Container Registry (ACR)
+- Azure Key Vault
+- Log Analytics Workspace
 
-## Deployment Flow
+PostgreSQL is intentionally deployed in East US 2 because the current subscription is restricted from provisioning PostgreSQL Flexible Server in East US. The remaining production foundation is deployed in East US.
 
-```
-GitHub Actions
+## Deployment flow
+
+```text
+Pull Request
     |
-Azure OIDC
+Terraform Azure Plan
     |
-terraform init
+fmt + init + validate + plan
+    |
+Merge to main
+    |
+Terraform Azure Apply
+    |
+Azure OIDC Apply Identity
+    |
+Remote AzureRM state + state lock
     |
 terraform plan
     |
-Risk Gate
+terraform apply
     |
-Approval
+Azure CLI live resource verification
     |
-terraform apply approved plan
-    |
-Verification
+Issue #22 Apply Tracker
 ```
 
 Production rules:
 
-- Remote state only
-- No direct apply from developer workstation
-- Destroy and replace require review
-- Existing resources must be imported before management
+- Remote state only for Apply.
+- No direct production Apply from a developer workstation.
+- Existing managed resources are refreshed from remote state before changes.
+- Destructive or replacement changes must be reviewed in Plan before merge.
+- Apply completes only after Azure API verification confirms the expected resources exist.

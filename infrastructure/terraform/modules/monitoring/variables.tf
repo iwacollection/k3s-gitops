@@ -10,7 +10,7 @@ variable "resource_group_name" {
   type = string
 }
 
-variable "idle_timeout_in_minutes" {
+variable "retention_in_days" {
   type    = number
-  default = 10
+  default = 30
 }

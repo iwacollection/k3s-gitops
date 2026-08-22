@@ -12,9 +12,7 @@ on:
       - main
     paths:
       - 'infrastructure/terraform/environments/production/**'
-      - 'infrastructure/terraform/modules/load-balancer/**'
-      - 'infrastructure/terraform/modules/managed-redis/**'
-      - 'infrastructure/terraform/modules/database/**'
+      - 'infrastructure/terraform/modules/**'
       - '.github/workflows/terraform-azure-apply.yml'
 
 permissions:
@@ -157,8 +155,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RG='rg-k3s-production'
+
+          az network vnet show --resource-group "$RG" --name k3s-production-vnet --output none
+          az network nsg show --resource-group "$RG" --name k3s-production-aks-nsg --output none
+          az network nat gateway show --resource-group "$RG" --name k3s-production-nat --output none
+          az aks show --resource-group "$RG" --name k3s-production-aks --output none
+          az network lb show --resource-group "$RG" --name k3s-production-lb --output none
+          az redis show --resource-group "$RG" --name k3s-production-redis --output none
+          az postgres flexible-server show --resource-group "$RG" --name k3s-production-postgres --output none
+          az monitor log-analytics workspace show --resource-group "$RG" --workspace-name k3s-production-law --output none
+
+          ACR_COUNT="$(az acr list --resource-group "$RG" --query "[?starts_with(name, 'k3sprodacr')] | length(@)" --output tsv)"
+          KV_COUNT="$(az keyvault list --resource-group "$RG" --query "[?starts_with(name, 'k3s-prod-kv-')] | length(@)" --output tsv)"
+          test "$ACR_COUNT" -ge 1
+          test "$KV_COUNT" -ge 1
+
           az resource list \
-            --resource-group rg-k3s-production \
+            --resource-group "$RG" \
             --query "[].{name:name,type:type,location:location}" \
             --output table
 
