@@ -1,0 +1,39 @@
+# Terraform working directories
+**/.terraform/*
+
+# Terraform state and plan files
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.json
+.terraform.tfstate.lock.info
+
+# Generated backend declarations / local overrides
+**/backend.generated.tf
+**/*_override.tf
+**/*_override.tf.json
+**/override.tf
+**/override.tf.json
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Variable files may contain credentials or environment-specific data
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.production.example
+
+# Local environment / credential files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
