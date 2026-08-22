@@ -35,10 +35,9 @@ module "acr_private_endpoint" {
   location                       = var.location
   resource_group_name            = var.resource_group_name
   subnet_id                      = module.network.private_endpoint_subnet_id
-  virtual_network_id             = module.network.vnet_id
   private_connection_resource_id = module.container_registry.id
   subresource_names              = ["registry"]
-  private_dns_zone_name          = "privatelink.azurecr.io"
+  private_dns_zone_id            = module.private_dns.zone_ids["privatelink.azurecr.io"]
 }
 
 module "key_vault_private_endpoint" {
@@ -48,10 +47,9 @@ module "key_vault_private_endpoint" {
   location                       = var.location
   resource_group_name            = var.resource_group_name
   subnet_id                      = module.network.private_endpoint_subnet_id
-  virtual_network_id             = module.network.vnet_id
   private_connection_resource_id = module.key_vault.id
   subresource_names              = ["vault"]
-  private_dns_zone_name          = "privatelink.vaultcore.azure.net"
+  private_dns_zone_id            = module.private_dns.zone_ids["privatelink.vaultcore.azure.net"]
 }
 
 module "redis_private_endpoint" {
@@ -61,10 +59,9 @@ module "redis_private_endpoint" {
   location                       = var.location
   resource_group_name            = var.resource_group_name
   subnet_id                      = module.network.private_endpoint_subnet_id
-  virtual_network_id             = module.network.vnet_id
   private_connection_resource_id = module.managed_redis.id
   subresource_names              = ["redisCache"]
-  private_dns_zone_name          = "privatelink.redis.cache.windows.net"
+  private_dns_zone_id            = module.private_dns.zone_ids["privatelink.redis.cache.windows.net"]
 }
 
 module "postgres_private_endpoint" {
@@ -74,10 +71,9 @@ module "postgres_private_endpoint" {
   location                       = var.location
   resource_group_name            = var.resource_group_name
   subnet_id                      = module.network.private_endpoint_subnet_id
-  virtual_network_id             = module.network.vnet_id
   private_connection_resource_id = module.database.id
   subresource_names              = ["postgresqlServer"]
-  private_dns_zone_name          = "privatelink.postgres.database.azure.com"
+  private_dns_zone_id            = module.private_dns.zone_ids["privatelink.postgres.database.azure.com"]
 }
 
 module "diagnostics" {
