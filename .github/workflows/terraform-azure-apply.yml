@@ -66,7 +66,7 @@ jobs:
       # to converge the subscription-scoped quota RBAC through Terraform. This
       # avoids permanently widening the normal Plan identity outside IaC.
       - name: Azure Login OIDC with Apply Identity for IaC bootstrap
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -194,7 +194,7 @@ jobs:
           echo '::warning::Quota RBAC list visibility is delayed; continuing to the quota API permission probe.'
 
       - name: Azure Login OIDC with Quota Identity
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -205,7 +205,7 @@ jobs:
         run: bash ./ensure-aks-quota.sh
 
       - name: Azure Login OIDC with Apply Identity
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
