@@ -117,6 +117,15 @@ jobs:
           echo "TFSTATE_KEY_NAME=$STATE_KEY_NAME" >> "$GITHUB_ENV"
           echo "TFSTATE_ACCESS_KEY=$STATE_ACCESS_KEY" >> "$GITHUB_ENV"
 
+      - name: Generate AzureRM backend declaration
+        shell: bash
+        run: |
+          cat > backend.generated.tf <<'EOF'
+          terraform {
+            backend "azurerm" {}
+          }
+          EOF
+
       - name: Terraform Init Remote State
         shell: bash
         run: |
