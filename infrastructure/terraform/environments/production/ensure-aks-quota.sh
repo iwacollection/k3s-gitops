@@ -4,6 +4,8 @@ set -euo pipefail
 REGION="${AKS_REGION:-eastus}"
 VM_SIZE="${AKS_VM_SIZE:-Standard_D2s_v7}"
 HEADROOM_VCPUS="${AKS_QUOTA_HEADROOM_VCPUS:-8}"
+RBAC_RETRY_ATTEMPTS="${AKS_QUOTA_RBAC_RETRY_ATTEMPTS:-12}"
+EFFECTIVE_RETRY_ATTEMPTS="${AKS_QUOTA_EFFECTIVE_RETRY_ATTEMPTS:-30}"
 SUBSCRIPTION_ID="$(printf '%s' "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}" | tr -d '\r\n')"
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.Compute/locations/${REGION}"
 
@@ -18,6 +20,36 @@ usage_value() {
   jq -r --arg resource "$resource_name" --arg field "$field" '
     .[] | select((.name.value // "") == $resource) | .[$field]
   ' <<<"$json" | head -n1
+}
+
+ensure_quota_provider() {
+  local state
+  state="$(az provider show --namespace Microsoft.Quota --query registrationState --output tsv 2>/dev/null || true)"
+
+  if [[ "$state" == "Registered" ]]; then
+    echo "Microsoft.Quota provider is already registered."
+    return 0
+  fi
+
+  for attempt in $(seq 1 "$RBAC_RETRY_ATTEMPTS"); do
+    echo "Registering Microsoft.Quota provider (attempt ${attempt}/${RBAC_RETRY_ATTEMPTS})."
+
+    if az provider register --namespace Microsoft.Quota --wait --only-show-errors >/dev/null 2>&1; then
+      state="$(az provider show --namespace Microsoft.Quota --query registrationState --output tsv 2>/dev/null || true)"
+      if [[ "$state" == "Registered" ]]; then
+        echo "Microsoft.Quota provider registration completed."
+        return 0
+      fi
+    fi
+
+    # A newly-created Quota Request Operator assignment can take a short time
+    # to propagate through Azure RBAC. Retry instead of failing the Apply run
+    # immediately after the Terraform bootstrap assignment is created.
+    sleep 15
+  done
+
+  echo "::error::Microsoft.Quota provider registration is still unauthorized or incomplete after RBAC propagation retries."
+  return 1
 }
 
 request_quota() {
@@ -37,28 +69,36 @@ request_quota() {
   echo "${localized_name}: requesting quota increase to ${target}."
 
   # Azure Quota is a GA CLI extension. Keep this explicit so hosted runner
-  # image changes do not make quota recovery depend on implicit extension install.
+  # image changes do not make quota recovery depend on implicit installation.
   az extension add --name quota --upgrade --only-show-errors >/dev/null
+  ensure_quota_provider
 
-  if [[ "$(az provider show --namespace Microsoft.Quota --query registrationState --output tsv 2>/dev/null || true)" != "Registered" ]]; then
-    az provider register --namespace Microsoft.Quota --wait --only-show-errors
-  fi
+  local update_ok=0
+  for attempt in $(seq 1 "$RBAC_RETRY_ATTEMPTS"); do
+    if az quota update \
+      --resource-name "$resource_name" \
+      --scope "$SCOPE" \
+      --limit-object "value=${target}" \
+      --resource-type dedicated \
+      --only-show-errors \
+      --output none; then
+      update_ok=1
+      break
+    fi
 
-  if ! az quota update \
-    --resource-name "$resource_name" \
-    --scope "$SCOPE" \
-    --limit-object "value=${target}" \
-    --resource-type dedicated \
-    --only-show-errors \
-    --output none; then
-    echo "::error::Unable to request ${localized_name} quota. The Apply identity needs Quota Request Operator (Microsoft.Quota/quotas/write) at subscription scope."
+    echo "${localized_name}: quota write not ready (attempt ${attempt}/${RBAC_RETRY_ATTEMPTS}); waiting for RBAC/API propagation."
+    sleep 15
+  done
+
+  if (( update_ok == 0 )); then
+    echo "::error::Unable to request ${localized_name} quota after retries. Verify the Terraform-managed Quota Request Operator assignment and subscription quota policy."
     return 1
   fi
 
-  # Small quota requests are often approved immediately, but the API can be
-  # asynchronous. Poll the effective quota before allowing Terraform to create
-  # additional AKS VMSS nodes.
-  for attempt in $(seq 1 12); do
+  # Quota requests can be asynchronous. Keep the workflow alive while Azure
+  # processes an automatically approvable request instead of immediately
+  # falling through to an AKS VMSS failure.
+  for attempt in $(seq 1 "$EFFECTIVE_RETRY_ATTEMPTS"); do
     effective_limit="$(az quota show \
       --resource-name "$resource_name" \
       --scope "$SCOPE" \
@@ -70,11 +110,11 @@ request_quota() {
       return 0
     fi
 
-    echo "${localized_name}: quota request pending (attempt ${attempt}/12, effective=${effective_limit:-unknown})."
-    sleep 30
+    echo "${localized_name}: quota request pending (attempt ${attempt}/${EFFECTIVE_RETRY_ATTEMPTS}, effective=${effective_limit:-unknown})."
+    sleep 60
   done
 
-  echo "::error::${localized_name} quota request did not become effective in time. Requested=${target}."
+  echo "::error::${localized_name} quota request was submitted but did not become effective within the workflow wait window. Requested=${target}."
   return 1
 }
 
