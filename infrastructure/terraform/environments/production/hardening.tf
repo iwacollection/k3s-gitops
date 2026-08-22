@@ -105,6 +105,7 @@ resource "azurerm_monitor_action_group" "platform" {
 resource "azurerm_monitor_activity_log_alert" "administrative_errors" {
   name                = "k3s-production-administrative-errors"
   resource_group_name = var.resource_group_name
+  location            = "global"
   scopes              = [data.azurerm_resource_group.production.id]
   description         = "Alert on failed Azure administrative operations in the production resource group."
 
