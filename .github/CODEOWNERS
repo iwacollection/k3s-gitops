@@ -1,0 +1,4 @@
+# Production IaC and workflow ownership
+* @iwacollection
+/infrastructure/terraform/ @iwacollection
+/.github/workflows/ @iwacollection
