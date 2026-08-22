@@ -161,6 +161,33 @@ resource "azurerm_security_center_subscription_pricing" "containers" {
   tier          = "Standard"
   resource_type = "Containers"
 
+  # Keep Defender advanced capabilities explicit. If extension blocks are
+  # omitted, AzureRM disables them during an otherwise harmless pricing update.
+  extension {
+    name = "ContainerSensor"
+    additional_extension_properties = {
+      AntiMalwareEnabled    = "True"
+      AutoProvisioning      = "True"
+      InstallationMethod    = "AKSAddon"
+      SecurityGatingEnabled = "True"
+    }
+  }
+
+  extension {
+    name = "AgentlessVmScanning"
+    additional_extension_properties = {
+      ExclusionTags = jsonencode([])
+    }
+  }
+
+  extension {
+    name = "AgentlessDiscoveryForKubernetes"
+  }
+
+  extension {
+    name = "ContainerRegistriesVulnerabilityAssessments"
+  }
+
   # Microsoft.Security/pricings is subscription-scoped and rejects concurrent
   # updates with HTTP 409. Serialize plans so fresh subscriptions converge too.
   depends_on = [azurerm_security_center_subscription_pricing.key_vaults]
