@@ -27,7 +27,8 @@ concurrency:
 jobs:
   terraform-apply:
     name: Terraform Apply Azure
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     environment: production
 
     env:
@@ -46,10 +47,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: '1.15.9'
 
       - name: Validate required production secrets
         shell: bash
@@ -66,13 +71,13 @@ jobs:
       # to converge the subscription-scoped quota RBAC through Terraform. This
       # avoids permanently widening the normal Plan identity outside IaC.
       - name: Azure Login OIDC with Apply Identity for IaC bootstrap
-        uses: azure/login@v2
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Bootstrap Terraform state backend
+      - name: Bootstrap and initialize protected Terraform state backend
         shell: bash
         run: |
           set -euo pipefail
@@ -96,17 +101,40 @@ jobs:
               --location "$LOCATION" \
               --sku Standard_LRS \
               --kind StorageV2 \
+              --https-only true \
               --min-tls-version TLS1_2 \
               --allow-blob-public-access false \
               --output none
           fi
+
+          # Reconcile safety controls on pre-existing backends as well as new ones.
+          az storage account update \
+            --resource-group "$STATE_RG" \
+            --name "$STATE_ACCOUNT" \
+            --https-only true \
+            --min-tls-version TLS1_2 \
+            --allow-blob-public-access false \
+            --output none
+
+          # Terraform state is a recovery-critical asset. Keep versions and soft
+          # deleted blobs/containers for 30 days before the later OIDC data-plane
+          # migration removes shared-key access entirely.
+          az storage account blob-service-properties update \
+            --resource-group "$STATE_RG" \
+            --account-name "$STATE_ACCOUNT" \
+            --enable-versioning true \
+            --enable-delete-retention true \
+            --delete-retention-days 30 \
+            --enable-container-delete-retention true \
+            --container-delete-retention-days 30 \
+            --output none
 
           STATE_ACCESS_KEY="$(az storage account keys list \
             --resource-group "$STATE_RG" \
             --account-name "$STATE_ACCOUNT" \
             --query '[0].value' \
             --output tsv)"
-
+          test -n "$STATE_ACCESS_KEY"
           echo "::add-mask::$STATE_ACCESS_KEY"
 
           az storage container create \
@@ -115,30 +143,21 @@ jobs:
             --account-key "$STATE_ACCESS_KEY" \
             --output none
 
-          echo "TFSTATE_RESOURCE_GROUP=$STATE_RG" >> "$GITHUB_ENV"
-          echo "TFSTATE_STORAGE_ACCOUNT=$STATE_ACCOUNT" >> "$GITHUB_ENV"
-          echo "TFSTATE_CONTAINER=$STATE_CONTAINER" >> "$GITHUB_ENV"
-          echo "TFSTATE_KEY_NAME=$STATE_KEY_NAME" >> "$GITHUB_ENV"
-          echo "TFSTATE_ACCESS_KEY=$STATE_ACCESS_KEY" >> "$GITHUB_ENV"
-
-      - name: Generate AzureRM backend declaration
-        shell: bash
-        run: |
           cat > backend.generated.tf <<'EOF'
           terraform {
             backend "azurerm" {}
           }
           EOF
 
-      - name: Terraform Init Remote State
-        shell: bash
-        run: |
-          terraform init -reconfigure -input=false \
-            -backend-config="resource_group_name=${TFSTATE_RESOURCE_GROUP}" \
-            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
-            -backend-config="container_name=${TFSTATE_CONTAINER}" \
-            -backend-config="key=${TFSTATE_KEY_NAME}" \
-            -backend-config="access_key=${TFSTATE_ACCESS_KEY}"
+          # Keep the storage account key scoped to this shell step only. Do not
+          # persist it in GITHUB_ENV or pass it visibly on the command line.
+          export ARM_ACCESS_KEY="$STATE_ACCESS_KEY"
+          terraform init -reconfigure -input=false -lockfile=readonly \
+            -backend-config="resource_group_name=${STATE_RG}" \
+            -backend-config="storage_account_name=${STATE_ACCOUNT}" \
+            -backend-config="container_name=${STATE_CONTAINER}" \
+            -backend-config="key=${STATE_KEY_NAME}"
+          unset ARM_ACCESS_KEY STATE_ACCESS_KEY
 
       - name: Terraform Validate
         run: terraform validate
@@ -194,7 +213,7 @@ jobs:
           echo '::warning::Quota RBAC list visibility is delayed; continuing to the quota API permission probe.'
 
       - name: Azure Login OIDC with Quota Identity
-        uses: azure/login@v2
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -205,7 +224,7 @@ jobs:
         run: bash ./ensure-aks-quota.sh
 
       - name: Azure Login OIDC with Apply Identity
-        uses: azure/login@v2
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -333,7 +352,7 @@ jobs:
 
       - name: Report Apply Run
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const status = '${{ job.status }}';
