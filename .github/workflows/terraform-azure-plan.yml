@@ -1,4 +1,4 @@
-name: Terraform Azure Plan
+name: Terraform PR Validation
 
 on:
   pull_request:
@@ -7,21 +7,20 @@ on:
       - '.github/workflows/terraform-azure-plan.yml'
       - '.github/workflows/terraform-azure-apply.yml'
 
+# PR validation intentionally has no id-token permission and no production
+# environment. A pull request must not receive an Azure production identity
+# merely to validate Terraform syntax and module wiring.
 permissions:
-  id-token: write
   contents: read
 
 jobs:
-  terraform-plan:
-    name: Terraform Validate and Plan
-    runs-on: ubuntu-latest
-    environment: production
+  terraform-validate:
+    name: Terraform Format and Validate
+    runs-on: ubuntu-24.04
 
     env:
       TF_IN_AUTOMATION: 'true'
       TF_INPUT: '0'
-      TF_VAR_database_admin_username: tfplanadmin
-      TF_VAR_database_admin_password: PlanOnly-ChangeMe-1234!
 
     defaults:
       run:
@@ -29,26 +28,28 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Azure Login OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
 
       - name: Terraform Format Check
         run: terraform fmt -check -diff -recursive ../../..
 
-      - name: Terraform Init
+      - name: Terraform Init Without Backend
         run: terraform init -backend=false -input=false
 
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Plan
-        run: terraform plan -input=false -out=tfplan
+      - name: Explain Production Plan Boundary
+        shell: bash
+        run: |
+          cat <<'EOF'
+          PR validation completed without Azure credentials and without remote state.
+          This job is intentionally NOT a production Terraform plan.
+          The authoritative production plan is generated from remote AzureRM state
+          immediately before Apply and is protected by the destructive-action gate.
+          EOF
