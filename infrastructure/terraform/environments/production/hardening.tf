@@ -131,6 +131,8 @@ resource "azurerm_data_protection_backup_vault" "production" {
 }
 
 resource "azurerm_policy_definition" "audit_environment_tag" {
+  count = var.enable_subscription_governance ? 1 : 0
+
   name         = "k3s-audit-environment-tag"
   policy_type  = "Custom"
   mode         = "Indexed"
@@ -149,18 +151,24 @@ resource "azurerm_policy_definition" "audit_environment_tag" {
 }
 
 resource "azurerm_resource_group_policy_assignment" "audit_environment_tag" {
+  count = var.enable_subscription_governance ? 1 : 0
+
   name                 = "k3s-audit-environment-tag"
   resource_group_id    = data.azurerm_resource_group.production.id
-  policy_definition_id = azurerm_policy_definition.audit_environment_tag.id
+  policy_definition_id = azurerm_policy_definition.audit_environment_tag[0].id
   description          = "Audit missing environment tags in the production resource group."
 }
 
 resource "azurerm_security_center_subscription_pricing" "containers" {
+  count = var.enable_subscription_governance ? 1 : 0
+
   tier          = "Standard"
   resource_type = "Containers"
 }
 
 resource "azurerm_security_center_subscription_pricing" "key_vaults" {
+  count = var.enable_subscription_governance ? 1 : 0
+
   tier          = "Standard"
   resource_type = "KeyVaults"
 }
