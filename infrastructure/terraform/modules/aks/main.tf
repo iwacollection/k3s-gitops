@@ -9,6 +9,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   private_cluster_enabled   = var.private_cluster_enabled
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
+  temporary_name_for_rotation = "systemtmp"
 
   default_node_pool {
     name            = "system"
@@ -44,8 +45,8 @@ resource "azurerm_kubernetes_cluster_node_pool" "workload" {
   name                  = "workload"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
   vm_size               = var.user_vm_size
-  node_count            = var.user_node_count
-  vnet_subnet_id        = var.subnet_id
+  node_count             = var.user_node_count
+  vnet_subnet_id         = var.subnet_id
   os_disk_size_gb       = 64
   mode                  = "User"
   zones                 = var.availability_zones
