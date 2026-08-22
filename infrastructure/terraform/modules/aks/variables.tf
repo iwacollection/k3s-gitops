@@ -34,7 +34,7 @@ variable "node_count" {
 
 variable "vm_size" {
   type    = string
-  default = "Standard_D2s_v3"
+  default = "Standard_D2s_v7"
 }
 
 variable "private_cluster_enabled" {
