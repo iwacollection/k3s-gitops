@@ -168,9 +168,15 @@ jobs:
           set -euo pipefail
           QUOTA_PRINCIPAL_ID="$(terraform output -raw quota_identity_principal_id)"
           SUBSCRIPTION_SCOPE="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
+
+          # `az role assignment list --assignee-object-id` is not supported by
+          # every Azure CLI version. Terraform state is authoritative for the
+          # creation, while `--assignee` provides a portable Azure-side check.
+          terraform state show azurerm_role_assignment.quota_request_operator >/dev/null
+
           for attempt in $(seq 1 12); do
             COUNT="$(az role assignment list \
-              --assignee-object-id "$QUOTA_PRINCIPAL_ID" \
+              --assignee "$QUOTA_PRINCIPAL_ID" \
               --scope "$SUBSCRIPTION_SCOPE" \
               --query "[?roleDefinitionName=='Quota Request Operator'] | length(@)" \
               --output tsv 2>/dev/null || echo 0)"
@@ -178,11 +184,14 @@ jobs:
               echo "Quota Request Operator assignment is visible for principal ${QUOTA_PRINCIPAL_ID}."
               exit 0
             fi
-            echo "Waiting for quota RBAC assignment visibility (${attempt}/12)."
+            echo "Quota RBAC is in Terraform state; waiting for Azure list visibility (${attempt}/12)."
             sleep 10
           done
-          echo '::error::Terraform created the quota RBAC assignment but it is not visible yet.'
-          exit 1
+
+          # Do not block here solely on the list API. The next quota-provider
+          # registration/write step is the authoritative permission probe and
+          # has its own RBAC propagation retries.
+          echo '::warning::Quota RBAC list visibility is delayed; continuing to the quota API permission probe.'
 
       - name: Azure Login OIDC with Quota Identity
         uses: azure/login@v2
@@ -309,7 +318,7 @@ jobs:
           az security pricing show --name KeyVaults --output none
 
           QUOTA_PRINCIPAL_ID="$(terraform output -raw quota_identity_principal_id)"
-          test "$(az role assignment list --assignee-object-id "$QUOTA_PRINCIPAL_ID" --scope "/subscriptions/${AZURE_SUBSCRIPTION_ID}" --query "[?roleDefinitionName=='Quota Request Operator'] | length(@)" --output tsv)" -ge 1
+          test "$(az role assignment list --assignee "$QUOTA_PRINCIPAL_ID" --scope "/subscriptions/${AZURE_SUBSCRIPTION_ID}" --query "[?roleDefinitionName=='Quota Request Operator'] | length(@)" --output tsv)" -ge 1
 
           az aks get-credentials --resource-group "$RG" --name k3s-production-aks --admin --overwrite-existing
           kubectl wait --for=condition=Ready nodes --all --timeout=10m
