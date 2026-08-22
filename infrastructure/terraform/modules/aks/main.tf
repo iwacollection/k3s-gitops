@@ -11,7 +11,6 @@ resource "azurerm_kubernetes_cluster" "this" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
   azure_policy_enabled      = true
-  automatic_channel_upgrade = "stable"
 
   default_node_pool {
     name                         = "system"
