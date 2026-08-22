@@ -11,6 +11,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
   azure_policy_enabled      = true
+  automatic_channel_upgrade = "stable"
 
   default_node_pool {
     name                        = "system"
@@ -21,6 +22,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     os_sku                      = "AzureLinux"
     zones                       = var.availability_zones
     max_pods                    = 50
+    only_critical_addons_enabled = true
     temporary_name_for_rotation = "systemtmp"
 
     upgrade_settings {
