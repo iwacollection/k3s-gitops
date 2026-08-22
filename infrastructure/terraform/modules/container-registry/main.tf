@@ -11,6 +11,15 @@ resource "azurerm_container_registry" "this" {
   anonymous_pull_enabled = false
   data_endpoint_enabled  = true
 
+  retention_policy {
+    days    = var.retention_days
+    enabled = var.retention_enabled
+  }
+
+  trust_policy {
+    enabled = var.content_trust_enabled
+  }
+
   dynamic "georeplications" {
     for_each = var.geo_replication_locations
 
