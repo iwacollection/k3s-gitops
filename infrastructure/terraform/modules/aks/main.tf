@@ -19,8 +19,12 @@ resource "azurerm_kubernetes_cluster" "this" {
     zones                       = var.availability_zones
     temporary_name_for_rotation = "systemtmp"
 
-    node_labels = {
-      "kubernetes.azure.com/mode" = "system"
+    # Keep the existing AKS upgrade defaults explicit so adding availability
+    # zones does not introduce unrelated pool drift during the rotation.
+    upgrade_settings {
+      max_surge                     = "10%"
+      drain_timeout_in_minutes      = 0
+      node_soak_duration_in_minutes = 0
     }
   }
 
