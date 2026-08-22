@@ -18,6 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
 
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: '0'
+      TF_VAR_database_admin_username: ${{ secrets.TF_DATABASE_ADMIN_USERNAME }}
+      TF_VAR_database_admin_password: ${{ secrets.TF_DATABASE_ADMIN_PASSWORD }}
+
     defaults:
       run:
         working-directory: infrastructure/terraform/environments/production
@@ -37,10 +43,10 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Validate
         run: terraform validate
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve
+        run: terraform apply -input=false -auto-approve
