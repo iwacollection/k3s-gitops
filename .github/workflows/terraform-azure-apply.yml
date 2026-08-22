@@ -142,8 +142,47 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      - name: Adopt subscription Defender pricing into Terraform state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          adopt_pricing() {
+            local address="$1"
+            local pricing_name="$2"
+            local resource_id="/subscriptions/${AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Security/pricings/${pricing_name}"
+
+            if terraform state show "$address" >/dev/null 2>&1; then
+              echo "$address is already managed in Terraform state."
+              return 0
+            fi
+
+            # Defender pricing resources are subscription singletons. Azure can
+            # already have them at Free or Standard even when Terraform state
+            # does not, so adopt rather than attempting a conflicting create.
+            az security pricing show --name "$pricing_name" --output none
+            terraform import -input=false "$address" "$resource_id"
+          }
+
+          adopt_pricing azurerm_security_center_subscription_pricing.key_vaults KeyVaults
+          adopt_pricing azurerm_security_center_subscription_pricing.containers Containers
+
       - name: Terraform Apply Plan
         run: terraform plan -input=false -out=apply.tfplan
+
+      - name: Reject destructive production plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform show -json apply.tfplan > apply.tfplan.json
+          DELETE_COUNT="$(jq '[.resource_changes[]? | select((.change.actions // []) | index("delete"))] | length' apply.tfplan.json)"
+          echo "Planned resource delete/replacement actions: $DELETE_COUNT"
+
+          if [ "$DELETE_COUNT" -ne 0 ]; then
+            echo '::error::Destructive Terraform actions detected. Production apply is blocked to protect existing Azure resources.'
+            terraform show -no-color apply.tfplan
+            exit 1
+          fi
 
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve apply.tfplan

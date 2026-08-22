@@ -154,6 +154,7 @@ resource "azurerm_resource_group_policy_assignment" "audit_environment_tag" {
 resource "azurerm_security_center_subscription_pricing" "key_vaults" {
   tier          = "Standard"
   resource_type = "KeyVaults"
+  subplan       = "PerKeyVault"
 }
 
 resource "azurerm_security_center_subscription_pricing" "containers" {
