@@ -27,6 +27,16 @@ variable "kubernetes_version" {
   default = null
 }
 
+variable "automatic_channel_upgrade" {
+  type    = string
+  default = "stable"
+}
+
+variable "disk_encryption_set_id" {
+  type    = string
+  default = null
+}
+
 variable "node_count" {
   type    = number
   default = 2
