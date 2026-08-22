@@ -4,14 +4,13 @@ resource "azurerm_kubernetes_cluster" "this" {
   resource_group_name = var.resource_group_name
   dns_prefix          = var.dns_prefix
 
-  kubernetes_version              = var.kubernetes_version
-  sku_tier                        = "Standard"
-  private_cluster_enabled         = true
-  local_account_disabled          = true
-  oidc_issuer_enabled             = true
-  workload_identity_enabled       = true
-  azure_policy_enabled            = true
-  api_server_authorized_ip_ranges = var.api_server_authorized_ip_ranges
+  kubernetes_version        = var.kubernetes_version
+  sku_tier                  = "Standard"
+  private_cluster_enabled   = true
+  local_account_disabled    = true
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = true
+  azure_policy_enabled      = true
 
   default_node_pool {
     name                        = "system"
