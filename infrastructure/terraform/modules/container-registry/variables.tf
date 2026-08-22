@@ -25,3 +25,21 @@ variable "geo_replication_locations" {
   type        = list(string)
   default     = []
 }
+
+variable "retention_enabled" {
+  description = "Enable ACR retention policy for untagged manifests"
+  type        = bool
+  default     = true
+}
+
+variable "retention_days" {
+  description = "Days to retain untagged manifests"
+  type        = number
+  default     = 30
+}
+
+variable "content_trust_enabled" {
+  description = "Enable ACR content trust"
+  type        = bool
+  default     = true
+}
