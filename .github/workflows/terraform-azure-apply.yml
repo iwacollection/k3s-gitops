@@ -150,7 +150,9 @@ jobs:
           adopt_pricing() {
             local address="$1"
             local pricing_name="$2"
-            local resource_id="/subscriptions/${AZURE_SUBSCRIPTION_ID}/providers/Microsoft.Security/pricings/${pricing_name}"
+            local subscription_id
+            subscription_id="$(printf '%s' "$AZURE_SUBSCRIPTION_ID" | tr -d '\r\n')"
+            local resource_id="/subscriptions/${subscription_id}/providers/Microsoft.Security/pricings/${pricing_name}"
 
             if terraform state show "$address" >/dev/null 2>&1; then
               echo "$address is already managed in Terraform state."
