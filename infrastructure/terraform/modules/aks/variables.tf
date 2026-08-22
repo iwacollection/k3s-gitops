@@ -29,12 +29,27 @@ variable "kubernetes_version" {
 
 variable "node_count" {
   type    = number
-  default = 1
+  default = 2
 }
 
 variable "vm_size" {
   type    = string
   default = "Standard_D2s_v7"
+}
+
+variable "user_node_count" {
+  type    = number
+  default = 2
+}
+
+variable "user_vm_size" {
+  type    = string
+  default = "Standard_D2s_v7"
+}
+
+variable "availability_zones" {
+  type    = list(string)
+  default = ["1", "2", "3"]
 }
 
 variable "private_cluster_enabled" {
