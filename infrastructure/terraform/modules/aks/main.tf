@@ -5,10 +5,13 @@ resource "azurerm_kubernetes_cluster" "this" {
   dns_prefix          = var.dns_prefix
 
   kubernetes_version        = var.kubernetes_version
-  sku_tier                  = "Free"
-  private_cluster_enabled   = var.private_cluster_enabled
+  sku_tier                  = "Standard"
+  private_cluster_enabled   = true
+  local_account_disabled    = true
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
+  azure_policy_enabled      = true
+  api_server_authorized_ip_ranges = var.api_server_authorized_ip_ranges
 
   default_node_pool {
     name                        = "system"
@@ -16,11 +19,11 @@ resource "azurerm_kubernetes_cluster" "this" {
     vm_size                     = var.vm_size
     vnet_subnet_id              = var.subnet_id
     os_disk_size_gb             = 64
+    os_sku                      = "AzureLinux"
     zones                       = var.availability_zones
+    max_pods                    = 50
     temporary_name_for_rotation = "systemtmp"
 
-    # Keep the existing AKS upgrade defaults explicit so adding availability
-    # zones does not introduce unrelated pool drift during the rotation.
     upgrade_settings {
       max_surge                     = "10%"
       drain_timeout_in_minutes      = 0
@@ -34,8 +37,13 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   role_based_access_control_enabled = true
 
+  key_vault_secrets_provider {
+    secret_rotation_enabled = true
+  }
+
   network_profile {
     network_plugin = "azure"
+    network_policy = "azure"
     outbound_type  = "userAssignedNATGateway"
     service_cidr   = var.service_cidr
     dns_service_ip = var.dns_service_ip
@@ -55,6 +63,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "workload" {
   os_disk_size_gb       = 64
   mode                  = "User"
   zones                 = var.availability_zones
+  max_pods              = 50
 
   node_labels = {
     "workload" = "general"
