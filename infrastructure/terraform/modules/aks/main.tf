@@ -5,7 +5,6 @@ resource "azurerm_kubernetes_cluster" "this" {
   dns_prefix          = var.dns_prefix
 
   kubernetes_version        = var.kubernetes_version
-  automatic_channel_upgrade = var.automatic_channel_upgrade
   sku_tier                  = "Standard"
   private_cluster_enabled   = true
   local_account_disabled    = true
