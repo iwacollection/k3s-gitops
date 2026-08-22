@@ -17,7 +17,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     vnet_subnet_id  = var.subnet_id
     os_disk_size_gb = 64
     zones           = var.availability_zones
-    node_labels = {
+    node_labels     = {
       "kubernetes.azure.com/mode" = "system"
     }
   }
