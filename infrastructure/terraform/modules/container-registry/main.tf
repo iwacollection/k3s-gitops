@@ -5,6 +5,23 @@ resource "azurerm_container_registry" "this" {
   sku                           = var.sku
   admin_enabled                 = false
   public_network_access_enabled = var.public_network_access_enabled
+
+  # Supply chain security
+  content_trust_enabled = true
+
+  # Cleanup untagged manifests automatically
+  retention_policy {
+    days    = 30
+    enabled = true
+  }
+
+  # Premium registry geo replication baseline
+  dynamic "georeplications" {
+    for_each = var.geo_replication_locations
+    content {
+      location = georeplications.value
+    }
+  }
 }
 
 output "id" {
