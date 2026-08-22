@@ -7,10 +7,6 @@ resource "azurerm_container_registry" "this" {
   public_network_access_enabled = var.public_network_access_enabled
 
   zone_redundancy_enabled = true
-  retention_policy {
-    days    = 30
-    enabled = true
-  }
 
   anonymous_pull_enabled = false
   data_endpoint_enabled  = true
