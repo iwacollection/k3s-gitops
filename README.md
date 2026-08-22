@@ -1,8 +1,8 @@
 # Azure Production Terraform Stack
 
-## Active stack
+## Canonical Terraform root
 
-The production entrypoint used by GitHub Actions is:
+The only active Terraform root in this repository is:
 
 `infrastructure/terraform/environments/production`
 
@@ -10,61 +10,79 @@ Reusable modules live under:
 
 `infrastructure/terraform/modules`
 
-The root-level Terraform files are an earlier architecture scaffold and are not used by the production Plan/Apply workflows.
+Do not run Terraform from the repository root. Obsolete root-level Terraform scaffolding has been removed so automation and operators cannot accidentally target a second architecture.
 
 ## Managed production architecture
 
-The active stack manages and verifies:
+The active stack currently manages:
 
-- Azure Load Balancer + Public IP
-- PostgreSQL Flexible Server
-- Azure Cache for Redis
-- Virtual Network
-  - AKS subnet
-  - Private-endpoint subnet reserved for later private connectivity
-- Network Security Group
-- NAT Gateway + Public IP
 - Azure Kubernetes Service (AKS)
   - Azure CNI
-  - OIDC issuer
-  - Workload Identity
-  - Log Analytics / Container Insights integration
+  - multi-zone system and workload node pools
+  - OIDC issuer and Workload Identity
+  - Container Insights / Log Analytics integration
+- Virtual Network
+  - AKS subnet
+  - dedicated Private Endpoint subnet
+- Network Security Group
+- NAT Gateway + Public IP
 - Azure Container Registry (ACR)
 - Azure Key Vault
-- Log Analytics Workspace
+- PostgreSQL Flexible Server
+- Azure Cache for Redis
+- Private Endpoints and Private DNS for ACR, Key Vault, PostgreSQL and Redis
+- Azure Load Balancer + Public IP
+- Log Analytics and diagnostic settings
+- Azure Monitor activity-log alerting
+- Defender for Containers and Defender for Key Vault
+- Azure Policy for production tagging
+- Resource-group budget controls
+- Data Protection Backup Vault
 
-PostgreSQL is intentionally deployed in East US 2 because the current subscription is restricted from provisioning PostgreSQL Flexible Server in East US. The remaining production foundation is deployed in East US.
+PostgreSQL is intentionally deployed in East US 2 because this subscription has previously been unable to provision the selected PostgreSQL Flexible Server capability in East US. The remaining production foundation is deployed in East US.
 
 ## Deployment flow
 
 ```text
 Pull Request
     |
-Terraform Azure Plan
+Terraform PR validation
     |
-fmt + init + validate + plan
+fmt + init(backend=false) + validate
     |
 Merge to main
     |
 Terraform Azure Apply
     |
-Azure OIDC Apply Identity
+Azure OIDC identities
     |
 Remote AzureRM state + state lock
     |
-terraform plan
+authoritative terraform plan
+    |
+0-destroy safety gate
     |
 terraform apply
     |
-Azure CLI live resource verification
+Azure API / Kubernetes live verification
     |
 Issue #22 Apply Tracker
 ```
 
-Production rules:
+### Important safety boundary
 
-- Remote state only for Apply.
-- No direct production Apply from a developer workstation.
-- Existing managed resources are refreshed from remote state before changes.
-- Destructive or replacement changes must be reviewed in Plan before merge.
-- Apply completes only after Azure API verification confirms the expected resources exist.
+A PR job initialized with `-backend=false` does **not** read production state and therefore must not be treated as an authoritative production plan. The authoritative plan is the remote-state plan generated immediately before production Apply. The PR workflow is being hardened to remain credential-free and validation-only unless a trusted remote-state planning path is explicitly introduced.
+
+## Production rules
+
+- Use remote state for every production mutation.
+- Do not run direct production Apply from a developer workstation.
+- Use GitHub OIDC/workload federation instead of long-lived Azure client secrets.
+- Never commit Terraform state, saved plans, generated backend files, kubeconfigs, private keys, real secret-bearing `tfvars`, or local credential files.
+- Do not merge resource changes based only on a backend-disabled plan.
+- The Apply workflow must reject unexpected delete/replacement actions before mutation.
+- Do not weaken availability or security controls just to make convergence succeed.
+- Irreversible security settings require a dedicated migration decision and rollback analysis.
+- Apply is complete only after live Azure/Kubernetes verification passes and the tracker records the outcome.
+
+See `SECURITY.md` for the repository security policy.
