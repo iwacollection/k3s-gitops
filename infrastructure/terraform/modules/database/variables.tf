@@ -30,6 +30,12 @@ variable "sku_name" {
   default = "GP_Standard_D2s_v3"
 }
 
+variable "zone" {
+  type        = string
+  description = "Availability zone for the PostgreSQL Flexible Server. Keep aligned with the existing managed server to avoid an invalid zone migration."
+  default     = "1"
+}
+
 variable "storage_mb" {
   type    = number
   default = 32768
