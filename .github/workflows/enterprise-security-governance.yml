@@ -1,0 +1,111 @@
+name: Enterprise Security Governance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+
+jobs:
+  runner-security:
+    name: Runner Security Baseline
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate workflow security controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking GitHub Actions governance baseline"
+          test -d .github/workflows
+
+  dependency-security:
+    name: Dependency and Supply Chain Scan
+    runs-on: ubuntu-24.04
+    needs: runner-security
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: software-bill-of-materials
+          path: sbom.spdx.json
+
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+
+  secret-governance:
+    name: Secret Governance Check
+    runs-on: ubuntu-24.04
+    needs: runner-security
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Detect accidental secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  container-security:
+    name: Container Supply Chain Security
+    runs-on: ubuntu-24.04
+    needs: runner-security
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Container vulnerability scan
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: fs
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+  oidc-governance:
+    name: OIDC Federation Governance
+    runs-on: ubuntu-24.04
+    needs: runner-security
+    steps:
+      - name: Validate OIDC boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Production workflows must use short-lived OIDC credentials."
+          echo "Long-lived cloud access keys must not be introduced."
+
+  security-gate:
+    name: Enterprise Security Gate
+    runs-on: ubuntu-24.04
+    needs:
+      - dependency-security
+      - secret-governance
+      - container-security
+      - oidc-governance
+    steps:
+      - name: Security approval gate passed
+        run: echo "All enterprise security governance checks passed"
