@@ -59,10 +59,11 @@ module "container_registry" {
 module "key_vault" {
   source = "../../modules/key-vault"
 
-  name                = local.key_vault_name
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  tenant_id           = data.azurerm_client_config.current.tenant_id
+  name                       = local.key_vault_name
+  location                   = var.location
+  resource_group_name        = var.resource_group_name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  soft_delete_retention_days = 7
 }
 
 module "aks" {
