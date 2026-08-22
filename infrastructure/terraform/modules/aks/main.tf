@@ -17,7 +17,7 @@ resource "azurerm_kubernetes_cluster" "this" {
     vnet_subnet_id  = var.subnet_id
     os_disk_size_gb = 64
     zones           = var.availability_zones
-    node_labels     = {
+    node_labels = {
       "kubernetes.azure.com/mode" = "system"
     }
   }
@@ -44,11 +44,11 @@ resource "azurerm_kubernetes_cluster_node_pool" "workload" {
   name                  = "workload"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
   vm_size               = var.user_vm_size
-  node_count             = var.user_node_count
-  vnet_subnet_id         = var.subnet_id
-  os_disk_size_gb        = 64
-  mode                   = "User"
-  zones                  = var.availability_zones
+  node_count            = var.user_node_count
+  vnet_subnet_id        = var.subnet_id
+  os_disk_size_gb       = 64
+  mode                  = "User"
+  zones                 = var.availability_zones
 
   node_labels = {
     "workload" = "general"
