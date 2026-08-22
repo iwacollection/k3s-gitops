@@ -8,6 +8,12 @@ variable "resource_group_name" {
   default = "rg-k3s-production"
 }
 
+variable "enable_subscription_governance" {
+  type        = bool
+  default     = false
+  description = "Enable subscription-scoped Azure Policy and Defender resources after the apply identity is granted Resource Policy Contributor and Security Admin at subscription scope."
+}
+
 module "load_balancer" {
   source = "../../modules/load-balancer"
 
