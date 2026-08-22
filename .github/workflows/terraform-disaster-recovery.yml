@@ -1,0 +1,96 @@
+name: Terraform Disaster Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Recovery operation
+        required: true
+        default: backup
+        type: choice
+        options:
+          - backup
+          - rollback-plan
+          - state-recovery
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: terraform-production-disaster-recovery
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    name: Terraform DR Recovery Workflow
+    runs-on: ubuntu-24.04
+    environment: production-recovery
+    timeout-minutes: 60
+
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: '0'
+
+    defaults:
+      run:
+        working-directory: infrastructure/terraform/environments/production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform State Backup Evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p recovery-evidence
+
+          terraform init -input=false
+
+          terraform state pull > recovery-evidence/terraform-state-backup.json || true
+
+          if [ -f recovery-evidence/terraform-state-backup.json ]; then
+            sha256sum recovery-evidence/terraform-state-backup.json > recovery-evidence/state-checksum.txt
+          fi
+
+          echo "State backup evidence generated"
+
+      - name: Generate Rollback Plan
+        if: github.event.inputs.action == 'rollback-plan'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform plan \
+            -refresh-only \
+            -out=recovery-evidence/rollback-review.tfplan || true
+
+          terraform show -no-color recovery-evidence/rollback-review.tfplan \
+            > recovery-evidence/rollback-plan.txt || true
+
+      - name: Upload Recovery Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-disaster-recovery-evidence
+          path: infrastructure/terraform/environments/production/recovery-evidence
+          retention-days: 180
+
+      - name: Create Recovery Incident
+        if: github.event.inputs.action != 'backup'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Terraform Production Recovery Operation Required',
+              body: `Recovery workflow executed.\n\nAction: ${context.payload.inputs.action}\n\nReview uploaded recovery evidence before any destructive rollback.`
+            })
