@@ -86,13 +86,13 @@ module "diagnostics" {
 
   workspace_id = module.monitoring.id
   target_resource_ids = {
-    aks        = module.aks.id
-    acr        = module.container_registry.id
-    key_vault  = module.key_vault.id
-    redis      = module.managed_redis.id
-    postgres   = module.database.id
+    aks           = module.aks.id
+    acr           = module.container_registry.id
+    key_vault     = module.key_vault.id
+    redis         = module.managed_redis.id
+    postgres      = module.database.id
     load_balancer = module.load_balancer.id
-    vnet       = module.network.vnet_id
+    vnet          = module.network.vnet_id
   }
 }
 
