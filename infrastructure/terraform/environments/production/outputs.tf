@@ -5,3 +5,7 @@ output "load_balancer_ip" {
 output "redis_hostname" {
   value = module.managed_redis.hostname
 }
+
+output "database_fqdn" {
+  value = module.database.fqdn
+}
