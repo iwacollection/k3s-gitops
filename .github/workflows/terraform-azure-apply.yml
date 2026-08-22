@@ -68,7 +68,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Bootstrap production resource group and Terraform state backend
+      - name: Bootstrap Terraform state backend
         shell: bash
         run: |
           set -euo pipefail
@@ -82,8 +82,8 @@ jobs:
           STATE_ACCOUNT="stk3stfstate${SUB_COMPACT:0:12}"
           STATE_ACCOUNT="${STATE_ACCOUNT:0:24}"
 
-          az group create --name "$STATE_RG" --location "$LOCATION" --output none
-          az group create --name "$WORKLOAD_RG" --location "$LOCATION" --output none
+          az group show --name "$STATE_RG" --output none || { echo "Missing state resource group: $STATE_RG"; exit 1; }
+          az group show --name "$WORKLOAD_RG" --output none || { echo "Missing workload resource group: $WORKLOAD_RG"; exit 1; }
 
           if ! az storage account show --resource-group "$STATE_RG" --name "$STATE_ACCOUNT" >/dev/null 2>&1; then
             az storage account create \
