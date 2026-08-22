@@ -19,3 +19,9 @@ variable "public_network_access_enabled" {
   type    = bool
   default = false
 }
+
+variable "geo_replication_locations" {
+  description = "Additional Azure regions for ACR geo replication"
+  type        = list(string)
+  default     = []
+}
