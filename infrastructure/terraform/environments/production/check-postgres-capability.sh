@@ -14,9 +14,23 @@ DECLARED_VALID=0
 
 for region in "${CANDIDATE_REGIONS[@]}"; do
   echo "=== region: ${region} ==="
+  stderr_file="$(mktemp)"
 
-  if ! capabilities="$(az postgres flexible-server list-skus --location "$region" --output json 2>&1)"; then
-    echo "CLI_ERROR=${capabilities}"
+  if ! capabilities="$(az postgres flexible-server list-skus --location "$region" --output json 2>"$stderr_file")"; then
+    echo "CLI_ERROR=$(cat "$stderr_file")"
+    rm -f "$stderr_file"
+    continue
+  fi
+
+  cli_stderr="$(cat "$stderr_file")"
+  rm -f "$stderr_file"
+  if [[ -n "$cli_stderr" ]]; then
+    printf 'cli_note=%s\n' "$cli_stderr"
+  fi
+
+  if ! jq -e . >/dev/null 2>&1 <<<"$capabilities"; then
+    echo "INVALID_JSON_OUTPUT"
+    printf '%s\n' "$capabilities" | head -n 20
     continue
   fi
 
