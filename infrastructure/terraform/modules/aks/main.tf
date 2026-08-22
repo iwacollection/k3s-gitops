@@ -11,10 +11,10 @@ resource "azurerm_kubernetes_cluster" "this" {
   workload_identity_enabled = true
 
   default_node_pool {
-    name           = "system"
-    node_count     = var.node_count
-    vm_size        = var.vm_size
-    vnet_subnet_id = var.subnet_id
+    name            = "system"
+    node_count      = var.node_count
+    vm_size         = var.vm_size
+    vnet_subnet_id  = var.subnet_id
     os_disk_size_gb = 64
   }
 
