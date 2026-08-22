@@ -14,9 +14,6 @@ jobs:
   terraform-security:
     name: Terraform Security Validation
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: infrastructure/terraform/environments/production
 
     steps:
       - name: Checkout
@@ -26,21 +23,26 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform fmt check
+        working-directory: infrastructure/terraform/environments/production
         run: terraform fmt -check -recursive ../../..
 
       - name: Terraform init
+        working-directory: infrastructure/terraform/environments/production
         run: terraform init -backend=false
 
       - name: Terraform validate
+        working-directory: infrastructure/terraform/environments/production
         run: terraform validate
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
 
       - name: TFLint init
+        working-directory: infrastructure/terraform
         run: tflint --init
 
       - name: TFLint
+        working-directory: infrastructure/terraform
         run: tflint --recursive
 
       - name: Run Checkov IaC security scan
@@ -50,7 +52,10 @@ jobs:
           framework: terraform
           soft_fail: false
 
-      - name: Run tfsec
-        uses: aquasecurity/tfsec-action@v1.0.3
+      - name: Run Trivy IaC security scan
+        uses: aquasecurity/trivy-action@master
         with:
-          working_directory: infrastructure/terraform
+          scan-type: config
+          scan-ref: infrastructure/terraform
+          severity: HIGH,CRITICAL
+          exit-code: '1'
