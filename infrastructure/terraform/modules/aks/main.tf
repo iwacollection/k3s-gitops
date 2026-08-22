@@ -5,6 +5,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   dns_prefix          = var.dns_prefix
 
   kubernetes_version        = var.kubernetes_version
+  automatic_channel_upgrade = var.automatic_channel_upgrade
   sku_tier                  = "Standard"
   private_cluster_enabled   = true
   local_account_disabled    = true
@@ -12,12 +13,15 @@ resource "azurerm_kubernetes_cluster" "this" {
   workload_identity_enabled = true
   azure_policy_enabled      = true
 
+  disk_encryption_set_id = var.disk_encryption_set_id
+
   default_node_pool {
     name                         = "system"
     node_count                   = var.node_count
     vm_size                      = var.vm_size
     vnet_subnet_id               = var.subnet_id
     os_disk_size_gb              = 64
+    os_disk_type                 = "Ephemeral"
     os_sku                       = "AzureLinux"
     zones                        = var.availability_zones
     max_pods                     = 50
