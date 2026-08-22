@@ -13,3 +13,7 @@ output "aks_subnet_id" {
 output "private_endpoint_subnet_id" {
   value = azurerm_subnet.private_endpoints.id
 }
+
+output "ingress_subnet_id" {
+  value = azurerm_subnet.ingress.id
+}
