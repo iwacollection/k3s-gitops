@@ -15,11 +15,11 @@ resource "azurerm_user_assigned_identity" "workload" {
 }
 
 resource "azurerm_federated_identity_credential" "workload" {
-  name      = "k3s-production-workload-federation"
-  parent_id = azurerm_user_assigned_identity.workload.id
-  audience  = ["api://AzureADTokenExchange"]
-  issuer    = module.aks.oidc_issuer_url
-  subject   = "system:serviceaccount:platform:k3s-workload"
+  name                      = "k3s-production-workload-federation"
+  user_assigned_identity_id = azurerm_user_assigned_identity.workload.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = module.aks.oidc_issuer_url
+  subject                   = "system:serviceaccount:platform:k3s-workload"
 }
 
 resource "azurerm_role_assignment" "workload_key_vault_secrets" {
@@ -151,14 +151,18 @@ resource "azurerm_resource_group_policy_assignment" "audit_environment_tag" {
   description          = "Audit missing environment tags in the production resource group."
 }
 
-resource "azurerm_security_center_subscription_pricing" "containers" {
-  tier          = "Standard"
-  resource_type = "Containers"
-}
-
 resource "azurerm_security_center_subscription_pricing" "key_vaults" {
   tier          = "Standard"
   resource_type = "KeyVaults"
+}
+
+resource "azurerm_security_center_subscription_pricing" "containers" {
+  tier          = "Standard"
+  resource_type = "Containers"
+
+  # Microsoft.Security/pricings is subscription-scoped and rejects concurrent
+  # updates with HTTP 409. Serialize plans so fresh subscriptions converge too.
+  depends_on = [azurerm_security_center_subscription_pricing.key_vaults]
 }
 
 resource "azurerm_consumption_budget_resource_group" "production" {
