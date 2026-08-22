@@ -32,6 +32,10 @@ resource "azurerm_application_gateway" "this" {
     public_ip_address_id = azurerm_public_ip.this.id
   }
 
+  backend_address_pool {
+    name = "agic-managed-backend"
+  }
+
   waf_configuration {
     enabled          = true
     firewall_mode    = "Prevention"
