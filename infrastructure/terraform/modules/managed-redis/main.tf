@@ -4,7 +4,7 @@ resource "azurerm_redis_cache" "this" {
   resource_group_name = var.resource_group_name
 
   capacity = var.capacity
-  family   = "C"
+  family   = var.sku_name == "Premium" ? "P" : "C"
   sku_name = var.sku_name
 
   non_ssl_port_enabled = false
