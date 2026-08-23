@@ -6,13 +6,6 @@ resource "azurerm_container_registry" "this" {
   admin_enabled                 = false
   public_network_access_enabled = var.public_network_access_enabled
 
-  content_trust_enabled = true
-
-  retention_policy {
-    days    = 30
-    enabled = true
-  }
-
   georeplications {
     location = var.location
   }
