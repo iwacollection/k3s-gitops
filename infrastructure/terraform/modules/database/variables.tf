@@ -50,3 +50,18 @@ variable "public_network_access_enabled" {
   type    = bool
   default = false
 }
+
+variable "private_endpoint_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "private_endpoint_subnet_id" {
+  type    = string
+  default = null
+}
+
+variable "private_dns_zone_ids" {
+  type    = list(string)
+  default = []
+}
