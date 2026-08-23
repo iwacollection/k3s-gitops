@@ -1,0 +1,44 @@
+name: Container Image Policy Check
+
+on:
+  pull_request:
+    paths:
+      - 'kubernetes/**'
+      - 'helm/**'
+      - '.github/workflows/container-image-policy-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-policy-check:
+    name: Validate immutable container image references
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan Kubernetes manifests for mutable tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking Kubernetes image references..."
+
+          if grep -R "image:.*:latest" kubernetes helm 2>/dev/null; then
+            echo "::error::Mutable image tag 'latest' detected. Use immutable version tags or git SHA tags."
+            exit 1
+          fi
+
+          echo "Image tag policy check passed."
+
+      - name: Verify registry references
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -R "image:" kubernetes helm 2>/dev/null; then
+            echo "Image references detected. Manual review required for external registries."
+          fi
