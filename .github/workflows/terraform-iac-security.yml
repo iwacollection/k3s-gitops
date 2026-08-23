@@ -1,5 +1,6 @@
 name: Terraform IaC Security Gate
 
+# CI retrigger: synchronize PR event validation
 on:
   pull_request:
     branches:
