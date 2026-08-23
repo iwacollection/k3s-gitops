@@ -1,0 +1,25 @@
+replicaCount: 2
+
+image:
+  repository: k3sprodacr.azurecr.io/enterprise-cmdb
+  tag: "immutable"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "2"
+    memory: "2Gi"
+
+strategy:
+  type: RollingUpdate
+
+health:
+  readinessPath: /health/ready
+  livenessPath: /health/live
