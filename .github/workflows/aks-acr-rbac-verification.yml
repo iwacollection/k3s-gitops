@@ -1,0 +1,61 @@
+name: AKS ACR RBAC Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  verify:
+    name: Verify AKS kubelet AcrPull binding
+    runs-on: ubuntu-24.04
+
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+
+    steps:
+      - name: Azure Login OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify AKS ACR RBAC
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RG=rg-k3s-production
+          AKS=k3s-production-aks
+
+          KUBELET_ID=$(az aks show \
+            --resource-group "$RG" \
+            --name "$AKS" \
+            --query identityProfile.kubeletidentity.objectId \
+            --output tsv)
+
+          ACR_ID=$(az acr list \
+            --resource-group "$RG" \
+            --query '[0].id' \
+            --output tsv)
+
+          test -n "$KUBELET_ID"
+          test -n "$ACR_ID"
+
+          COUNT=$(az role assignment list \
+            --assignee "$KUBELET_ID" \
+            --scope "$ACR_ID" \
+            --query "[?roleDefinitionName=='AcrPull'] | length(@)" \
+            --output tsv)
+
+          if [ "$COUNT" -lt 1 ]; then
+            echo 'AcrPull role missing between AKS kubelet identity and ACR'
+            exit 1
+          fi
+
+          echo 'AKS -> ACR AcrPull RBAC verified successfully'
