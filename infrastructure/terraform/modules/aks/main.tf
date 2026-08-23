@@ -5,10 +5,12 @@ resource "azurerm_kubernetes_cluster" "this" {
   dns_prefix          = var.dns_prefix
 
   kubernetes_version        = var.kubernetes_version
-  sku_tier                  = "Free"
+  sku_tier                  = "Standard"
   private_cluster_enabled   = var.private_cluster_enabled
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
+  automatic_channel_upgrade = "stable"
+  azure_policy_enabled      = true
 
   default_node_pool {
     name                        = "system"
@@ -18,9 +20,8 @@ resource "azurerm_kubernetes_cluster" "this" {
     os_disk_size_gb             = 64
     zones                       = var.availability_zones
     temporary_name_for_rotation = "systemtmp"
+    host_encryption_enabled     = true
 
-    # Keep the existing AKS upgrade defaults explicit so adding availability
-    # zones does not introduce unrelated pool drift during the rotation.
     upgrade_settings {
       max_surge                     = "10%"
       drain_timeout_in_minutes      = 0
@@ -55,6 +56,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "workload" {
   os_disk_size_gb       = 64
   mode                  = "User"
   zones                 = var.availability_zones
+  host_encryption_enabled = true
 
   node_labels = {
     "workload" = "general"
