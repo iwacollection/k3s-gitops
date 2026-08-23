@@ -71,7 +71,7 @@ Issue #22 Apply Tracker
 
 ### Important safety boundary
 
-A PR job initialized with `-backend=false` does **not** read production state and therefore must not be treated as an authoritative production plan. The authoritative plan is the remote-state plan generated immediately before production Apply. The PR workflow is being hardened to remain credential-free and validation-only unless a trusted remote-state planning path is explicitly introduced.
+A PR job initialized with `-backend=false` does not read production state and therefore must not be treated as an authoritative production plan. The authoritative plan is the remote-state plan generated immediately before production Apply. The PR workflow is being hardened to remain credential-free and validation-only unless a trusted remote-state planning path is explicitly introduced.
 
 ## Production rules
 
@@ -84,5 +84,9 @@ A PR job initialized with `-backend=false` does **not** read production state an
 - Do not weaken availability or security controls just to make convergence succeed.
 - Irreversible security settings require a dedicated migration decision and rollback analysis.
 - Apply is complete only after live Azure/Kubernetes verification passes and the tracker records the outcome.
+
+## Hardening validation
+
+This commit exists only to trigger the PR validation loop after workflow trigger hardening changes.
 
 See `SECURITY.md` for the repository security policy.
