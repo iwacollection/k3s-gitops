@@ -86,6 +86,9 @@ jobs:
 
       - name: Terraform Plan JSON
         working-directory: infrastructure/terraform/environments/production
+        env:
+          TF_VAR_database_admin_username: ${{ secrets.DATABASE_ADMIN_USERNAME }}
+          TF_VAR_database_admin_password: ${{ secrets.DATABASE_ADMIN_PASSWORD }}
         run: |
           terraform plan -input=false -out=tfplan
           terraform show -json tfplan > tfplan.json
