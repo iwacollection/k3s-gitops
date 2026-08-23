@@ -8,4 +8,8 @@ module "database" {
 
   admin_username = var.database_admin_username
   admin_password = var.database_admin_password
+
+  private_endpoint_enabled    = var.database_private_endpoint_enabled
+  private_endpoint_subnet_id  = var.database_private_endpoint_subnet_id
+  private_dns_zone_ids        = var.database_private_dns_zone_ids
 }
