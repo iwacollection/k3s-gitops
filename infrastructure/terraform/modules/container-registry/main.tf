@@ -2,26 +2,24 @@ resource "azurerm_container_registry" "this" {
   name                          = var.name
   resource_group_name           = var.resource_group_name
   location                      = var.location
-  sku                           = var.sku
+  sku                           = "Premium"
   admin_enabled                 = false
   public_network_access_enabled = var.public_network_access_enabled
 
-  # Supply chain security
   content_trust_enabled = true
 
-  # Cleanup untagged manifests automatically
   retention_policy {
     days    = 30
     enabled = true
   }
 
-  # Premium registry geo replication baseline
-  dynamic "georeplications" {
-    for_each = var.geo_replication_locations
-    content {
-      location = georeplications.value
-    }
+  georeplications {
+    location = var.location
   }
+
+  zone_redundancy_enabled = true
+  data_endpoint_enabled   = true
+  anonymous_pull_enabled  = false
 }
 
 output "id" {
