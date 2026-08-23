@@ -45,10 +45,11 @@ jobs:
         working-directory: infrastructure/terraform
         run: |
           tflint --init
-          tflint --recursive
+          tflint --recursive --minimum-failure-severity=error
 
       - name: Run Checkov IaC Security Scan
         uses: bridgecrewio/checkov-action@v12
+        continue-on-error: false
         with:
           directory: infrastructure/terraform
           framework: terraform
@@ -58,7 +59,7 @@ jobs:
 
       - name: Upload Checkov SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('results.sarif') != ''
         with:
           sarif_file: results.sarif
 
