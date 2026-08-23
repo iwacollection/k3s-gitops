@@ -57,9 +57,19 @@ variable "private_endpoint_enabled" {
 variable "private_endpoint_subnet_id" {
   type    = string
   default = null
+
+  validation {
+    condition     = var.private_endpoint_enabled == false || var.private_endpoint_subnet_id != null
+    error_message = "private_endpoint_subnet_id must be provided when private_endpoint_enabled is true."
+  }
 }
 
 variable "private_dns_zone_ids" {
   type    = list(string)
   default = []
+
+  validation {
+    condition     = var.private_endpoint_enabled == false || length(var.private_dns_zone_ids) > 0
+    error_message = "private_dns_zone_ids must be provided when Key Vault private endpoint is enabled."
+  }
 }
