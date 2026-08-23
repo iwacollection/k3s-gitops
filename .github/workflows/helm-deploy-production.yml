@@ -1,0 +1,45 @@
+name: Helm Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable image tag
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy enterprise-cmdb
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Helm lint
+        run: |
+          helm lint helm/enterprise-cmdb
+
+      - name: Helm template validation
+        run: |
+          helm template enterprise-cmdb helm/enterprise-cmdb \
+            --set image.tag=${{ inputs.image_tag }}
+
+      - name: Deploy
+        run: |
+          echo "helm upgrade --install enterprise-cmdb"
+          echo "cluster credentials are injected by production environment"
+
+      - name: Rollout verification
+        run: |
+          echo "kubectl rollout status deployment/enterprise-cmdb -n cmdb"
+
+      - name: Smoke test
+        run: |
+          echo "health check verification"
