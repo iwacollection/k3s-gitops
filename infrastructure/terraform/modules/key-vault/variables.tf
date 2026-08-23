@@ -48,3 +48,18 @@ variable "allowed_subnet_ids" {
   type    = list(string)
   default = []
 }
+
+variable "private_endpoint_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "private_endpoint_subnet_id" {
+  type    = string
+  default = null
+}
+
+variable "private_dns_zone_ids" {
+  type    = list(string)
+  default = []
+}
