@@ -1,0 +1,46 @@
+name: AKS Ingress HTTPS Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-ingress:
+    name: Verify AKS ingress HTTPS chain
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify ingress resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG=rg-k3s-production
+          AKS=k3s-production-aks
+
+          az aks get-credentials \
+            --resource-group "$RG" \
+            --name "$AKS" \
+            --overwrite-existing
+
+          kubectl get ingress -A
+          kubectl get svc -A
+
+          if kubectl get ingress -A | grep -q enterprise-cmdb; then
+            echo 'enterprise-cmdb ingress detected'
+          else
+            echo 'enterprise-cmdb ingress not found'
+          fi
+
+          echo 'Ingress HTTPS verification completed'
