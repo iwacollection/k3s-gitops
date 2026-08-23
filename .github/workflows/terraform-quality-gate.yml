@@ -1,0 +1,22 @@
+name: Terraform Quality Gate
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+
+jobs:
+  terraform-check:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infrastructure/terraform/environments/production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+      - name: Terraform init
+        run: terraform init -backend=false
+      - name: Terraform validate
+        run: terraform validate
