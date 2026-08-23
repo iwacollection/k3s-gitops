@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: enterprise-cmdb
+  namespace: cmdb
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+spec:
+  ingressClassName: azure-application-gateway
+  rules:
+    - host: cmdb.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: enterprise-cmdb
+                port:
+                  number: 80
