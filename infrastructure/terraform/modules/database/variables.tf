@@ -59,9 +59,19 @@ variable "private_endpoint_enabled" {
 variable "private_endpoint_subnet_id" {
   type    = string
   default = null
+
+  validation {
+    condition     = var.private_endpoint_enabled == false || var.private_endpoint_subnet_id != null
+    error_message = "private_endpoint_subnet_id must be provided when PostgreSQL private endpoint is enabled."
+  }
 }
 
 variable "private_dns_zone_ids" {
   type    = list(string)
   default = []
+
+  validation {
+    condition     = var.private_endpoint_enabled == false || length(var.private_dns_zone_ids) > 0
+    error_message = "private_dns_zone_ids must be provided when PostgreSQL private endpoint is enabled."
+  }
 }
