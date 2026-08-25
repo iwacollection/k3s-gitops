@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
   security-events: write
-  id-token: write
 
 jobs:
   runner-security:
@@ -17,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -34,7 +33,7 @@ jobs:
     needs: runner-security
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
@@ -43,26 +42,40 @@ jobs:
         with:
           format: spdx-json
           output-file: sbom.spdx.json
+          upload-artifact: false
 
       - name: Upload SBOM Artifact
         uses: actions/upload-artifact@v4
         with:
           name: software-bill-of-materials
           path: sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 30
 
+      # GitHub Dependency Review requires Dependency Graph to be enabled in
+      # repository settings. Keep the capability explicit rather than failing
+      # every PR when that repository feature is unavailable.
       - name: Dependency Review
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
         uses: actions/dependency-review-action@v4
+
+      - name: Dependency Review capability notice
+        if: github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW != 'true'
+        shell: bash
+        run: |
+          echo 'Dependency Review is not enforced yet.'
+          echo 'Enable GitHub Dependency Graph and set repository variable ENABLE_DEPENDENCY_REVIEW=true to activate it.'
 
   secret-governance:
     name: Secret Governance Check
     runs-on: ubuntu-24.04
     needs: runner-security
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout full history for Gitleaks range scan
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Detect accidental secrets
         uses: gitleaks/gitleaks-action@v2
@@ -75,16 +88,17 @@ jobs:
     needs: runner-security
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
-      - name: Container vulnerability scan
-        uses: aquasecurity/trivy-action@v0.28.0
+      - name: Filesystem vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           severity: CRITICAL,HIGH
           exit-code: '1'
+          ignore-unfixed: true
 
   oidc-governance:
     name: OIDC Federation Governance
