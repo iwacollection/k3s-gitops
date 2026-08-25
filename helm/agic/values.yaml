@@ -1,8 +1,0 @@
-appgw:
-  usePrivateIP: false
-
-armAuth:
-  type: workloadIdentity
-
-rbac:
-  enabled: true
