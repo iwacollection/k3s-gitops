@@ -104,6 +104,8 @@ jobs:
         with:
           directory: infrastructure/terraform
           framework: terraform
+          baseline: infrastructure/terraform/.checkov.baseline
+          output_format: cli
           soft_fail: false
 
   plan:
