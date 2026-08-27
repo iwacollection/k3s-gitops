@@ -23,7 +23,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Terraform Format Check
+      - name: Terraform Setup
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.15.9'
@@ -32,8 +32,24 @@ jobs:
         working-directory: infrastructure/terraform
         run: terraform fmt -check -recursive
 
+      - name: Terraform Validate
+        working-directory: infrastructure/terraform/environments/production
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: Run TFLint
+        working-directory: infrastructure/terraform
+        run: |
+          tflint --init
+          tflint --recursive --minimum-failure-severity=error
+
       - name: Run Checkov IaC Security Scan
         uses: bridgecrewio/checkov-action@v12
+        continue-on-error: false
         with:
           directory: infrastructure/terraform
           framework: terraform
@@ -43,7 +59,7 @@ jobs:
 
       - name: Upload Checkov SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('results.sarif') != ''
         with:
           sarif_file: results.sarif
 
@@ -71,6 +87,9 @@ jobs:
 
       - name: Terraform Plan JSON
         working-directory: infrastructure/terraform/environments/production
+        env:
+          TF_VAR_database_admin_username: ${{ secrets.DATABASE_ADMIN_USERNAME }}
+          TF_VAR_database_admin_password: ${{ secrets.DATABASE_ADMIN_PASSWORD }}
         run: |
           terraform plan -input=false -out=tfplan
           terraform show -json tfplan > tfplan.json
