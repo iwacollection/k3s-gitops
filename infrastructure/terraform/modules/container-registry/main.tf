@@ -6,14 +6,11 @@ resource "azurerm_container_registry" "this" {
   admin_enabled                 = false
   public_network_access_enabled = var.public_network_access_enabled
 
-  # Supply chain security
-  content_trust_enabled = true
+  # AzureRM 4.x: trust_policy block/content_trust_enabled were replaced.
+  trust_policy_enabled = true
 
-  # Cleanup untagged manifests automatically
-  retention_policy {
-    days    = 30
-    enabled = true
-  }
+  # AzureRM 4.x: retention_policy block was replaced by this property.
+  retention_policy_in_days = 30
 
   # Premium registry geo replication baseline
   dynamic "georeplications" {
