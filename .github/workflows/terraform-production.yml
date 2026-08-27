@@ -5,6 +5,7 @@ on:
     paths:
       - 'infrastructure/terraform/**'
       - '.github/scripts/terraform-*.sh'
+      - '.github/scripts/verify-production.sh'
       - '.github/workflows/terraform-production.yml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'infrastructure/terraform/**'
       - '.github/scripts/terraform-*.sh'
+      - '.github/scripts/verify-production.sh'
       - '.github/workflows/terraform-production.yml'
   workflow_dispatch:
     inputs:
@@ -135,10 +137,10 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Azure login with plan/apply identity
+      - name: Azure login with read-only plan identity
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca
         with:
-          client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
+          client-id: ${{ secrets.AZURE_PLAN_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -239,6 +241,33 @@ jobs:
             cd "$TF_ROOT/plan-artifact"
             sha256sum -c production.tfplan.sha256
           )
+
+      - name: Azure login with apply identity for quota RBAC recovery
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca
+        with:
+          client-id: ${{ secrets.AZURE_APPLY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Recover quota role assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          scope="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
+          principal_id="$(az identity show \
+            --resource-group rg-platform-cicd \
+            --name k3s-gitops-iac-plan-dev-uami \
+            --query principalId \
+            --output tsv)"
+          assignment_name="$(python -c 'import sys, uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, f"{sys.argv[1]}|Quota Request Operator|{sys.argv[2]}"))' "$scope" "$principal_id")"
+
+          az role assignment create \
+            --name "$assignment_name" \
+            --assignee-object-id "$principal_id" \
+            --assignee-principal-type ServicePrincipal \
+            --role 'Quota Request Operator' \
+            --scope "$scope" \
+            --output none
 
       - name: Azure login with quota identity
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca

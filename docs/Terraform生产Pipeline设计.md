@@ -67,7 +67,7 @@ PR 阶段不生成真实生产 Plan，避免向 PR 暴露生产 OIDC 身份和�
 
 合并到 `main` 后或手工执行 Workflow 时：
 
-1. Azure OIDC 登录。
+1. 使用只读 Plan OIDC Identity 登录；不得复用 Apply Identity。
 2. 使用现有 `backend.tf` 连接 AzureRM Remote State。
 3. 不自动创建第二份 backend 配置。
 4. 不执行 `terraform apply -target`。
@@ -106,6 +106,8 @@ AKS 配额恢复属于生产变更前置操作。
 日常 Plan 不允许为此提前执行 `terraform apply -target`。
 
 生产 Apply 通过审批后，允许使用独立 Quota OIDC Identity 执行现有 `ensure-aks-quota.sh`，然后重新切回 Apply Identity，再 Apply 已审批 Plan。
+
+在配额检查前，Apply Job 使用已审批的 Apply Identity 按 Terraform 使用的确定性 Role Assignment ID 幂等恢复 `Quota Request Operator`。该恢复直接修复 Azure RBAC，不提前修改 Terraform State；随后 Apply Saved Plan 仍负责把同一资源收敛并写回 State。
 
 前提：
 
@@ -165,7 +167,7 @@ Validate and Security Gate
 
 ### production-plan
 
-用于生产 Plan 身份边界。
+用于生产 Plan 身份边界。必须配置 `AZURE_PLAN_CLIENT_ID`，该身份只授予读取生产资源、读取 Terraform State 所需的最小权限，不得拥有资源写权限，也不得复用 `AZURE_APPLY_CLIENT_ID`。
 
 ### production-verification
 
