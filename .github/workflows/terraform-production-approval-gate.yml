@@ -76,7 +76,7 @@ jobs:
           persist-credentials: false
 
       - name: Download Approved Plan Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: terraform-production-plan
           path: ./artifact
