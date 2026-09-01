@@ -1,585 +1,432 @@
-# 企业级 IaC（基础设施即代码）生产治理规范
+# 企业级 IaC 生产治理规范
 
-> 本文用于说明企业生产环境如何管理 Terraform、如何接管已有 Azure 资源、如何通过权限和流程避免误删除、误重建、错误发布。
+> **这份文档回答一个核心问题：生产基础设施到底由谁、通过什么流程、在什么权限下、以什么证据进行变更？**
 
----
+## 0. 一眼看懂
 
-# 一、IaC 管理核心原则
-
-## 1. 为什么使用 IaC
-
-生产环境基础设施不能依赖人工操作。
-
-传统方式：
-
-```
-工程师
-  |
-  v
-Azure Portal 手工修改
-  |
-  v
-资源状态不可追踪
-```
-
-问题：
-
-- 谁修改不知道
-- 为什么修改不知道
-- 修改无法审计
-- 容易产生配置漂移
-- 无法快速恢复
-
-IaC 模式：
-
-```
-代码仓库
-    |
-    v
-Pull Request
-    |
-    v
-CI检查
-    |
-    v
-Terraform Plan
-    |
-    v
-审批
-    |
-    v
-Apply
-```
-
-所有生产变更必须经过代码审查。
-
----
-
-# 二、生产 IaC 管理模型
-
-## 1. 仓库结构
-
-推荐结构：
-
-```
-infrastructure/
-│
-├── terraform/
-│   │
-│   ├── modules/
-│   │   ├── network
-│   │   ├── aks
-│   │   ├── database
-│   │   ├── key-vault
-│   │   └── monitoring
-│   │
-│   └── environments/
-│       ├── dev
-│       ├── staging
-│       └── production
-│
-└── kubernetes/
-```
-
----
-
-## 2. Module 管理原则
-
-Module（Terraform 模块）：负责封装资源能力。
-
-例如：
-
-```
-network module
-
-负责:
-- VNET
-- subnet
-- route table
-- NSG
-```
-
-Module 不保存环境配置。
-
-禁止：
-
-```
-modules/network/
-    production cidr
-    production password
-```
-
-原因：
-
-模块应该可以复用。
-
----
-
-## 3. Environment 管理原则
-
-Environment（环境层）：保存环境差异。
-
-例如：
-
-```
-production/
-
-region = eastasia
-aks_node_count = 5
-sku = premium
-```
-
-负责：
-
-- 生产参数
-- 网络规划
-- 容量配置
-- Feature 开关
-
----
-
-# 三、生产变更标准流程
-
-任何生产资源变更：
-
-```
+```text
 需求
- |
- v
-修改 Terraform
- |
- v
+ ↓
+Terraform代码 / Module
+ ↓
 Pull Request
- |
- v
-CI检查
- |
- +-- terraform fmt
- +-- terraform validate
- +-- tflint
- +-- checkov
- +-- policy check
- |
- v
+ ↓
+代码质量 Gate
+ ↓
+安全扫描 Gate
+ ↓
 Terraform Plan
- |
- v
-人工审核
- |
- v
-Terraform Apply
- |
- v
-验证
+ ↓
+Policy Gate（允许/阻断）
+ ↓
+人工 Review
+ ↓
+Production Approval
+ ↓
+受保护的 Apply
+ ↓
+Post-Apply Verification
+ ↓
+Drift Detection
+ ↓
+审计 / 持续治理
 ```
 
-禁止：
+四个对象必须始终区分：
 
-- 本地直接 apply
-- Portal 修改生产
-- 绕过审批
+| 对象 | 人话解释 | 不能做什么 |
+|---|---|---|
+| Git | 我们希望基础设施变成什么样 | 不能代表真实资源状态 |
+| Terraform State | Terraform 认为哪个代码对象对应哪个真实资源 | 不能当业务配置库 |
+| Azure | 云上的真实资源 | 不能成为绕过 Git 的配置入口 |
+| Terraform Plan | 这次准备改变什么 | 不是审批本身 |
 
 ---
 
-# 四、已有 Azure 资源如何接入 Terraform
+# 1. 管理边界
 
-## 目标
+## 1.1 哪些资源必须纳入 IaC
 
-不是重新创建资源。
+原则：**长期存在、影响生产、需要审计或需要重复创建的基础设施必须代码化。**
 
-目标状态：
+包括但不限于：
 
-```
-Azure Existing Resource
-          |
-          v
-Terraform State
-          |
-          v
-Terraform 管理
-```
-
----
-
-# 接入步骤
-
-## Step 1：资源盘点
-
-首先扫描 Azure：
-
-```
-az resource list
-az aks list
-az network vnet list
-az postgres flexible-server list
-```
-
-形成资产表：
-
-|资源|Resource ID|Terraform模块|
-|-|-|-|
-|VNET|xxx|network|
-|AKS|xxx|aks|
-|Database|xxx|database|
-
----
-
-## Step 2：编写 Terraform 定义
-
-例如已有 AKS：
-
-```hcl
-resource "azurerm_kubernetes_cluster" "main" {
-}
-```
-
-注意：
-
-这里只描述资源。
-
-不能直接创建。
-
----
-
-## Step 3：导入 State
-
-使用：
-
-```bash
-terraform import \
-azurerm_kubernetes_cluster.main \
-/resource/id
-```
-
-效果：
-
-```
-Azure资源
-   |
-   v
-Terraform State
-```
-
----
-
-## Step 4：Plan 校准
-
-执行：
-
-```bash
-terraform plan
-```
-
-理想结果：
-
-```
-No changes
-```
-
-如果出现：
-
-```
--/+ recreate
-- destroy
-```
-
-禁止执行。
-
-需要分析：
-
-- Terraform 缺少属性
-- Azure 默认配置
-- 人工修改漂移
-- Provider版本变化
-
----
-
-# 五、如何防止错误删除和错误重建
-
-这是生产 IaC 最重要部分。
-
-## 1. Terraform State保护
-
-生产禁止：
-
-```
-terraform.tfstate 本地保存
-```
-
-使用：
-
-```
-Azure Storage Backend
-        |
-        +-- State Lock
-        +-- Version History
-        +-- Backup
-```
-
-作用：
-
-避免多人同时修改导致状态损坏。
-
----
-
-## 2. prevent_destroy保护
-
-核心资源：
-
-- AKS
+- Resource Group
+- VNet / Subnet / Route Table / NSG
+- AKS / ACR
 - Database
+- Storage Account
 - Key Vault
-- Network
+- Managed Identity / RBAC
+- Monitoring / Diagnostic Settings
 
-增加：
+临时测试资源可以不纳管，但必须有生命周期负责人和清理策略。
 
-```hcl
-lifecycle {
-  prevent_destroy = true
-}
-```
+## 1.2 谁负责什么
 
-效果：
-
-即使误执行：
-
-```
-terraform destroy
-```
-
-Terraform 会阻止。
+| 角色 | 责任 |
+|---|---|
+| Developer | 提交变更、说明业务目的 |
+| Module Owner | 保证模块接口和兼容性 |
+| SRE / Cloud Owner | 审查生产风险 |
+| Security | 审查高风险安全策略 |
+| CI | 自动执行质量、安全、Policy 检查 |
+| Terraform Apply Identity | 仅执行获批准的变更 |
 
 ---
 
-## 3. Plan风险检测
+# 2. Module 与 Environment 的边界
 
-Apply之前必须检查：
+```text
+modules/
+   ↓ 提供“怎么创建”
 
-```
-terraform plan
-```
+environments/
+   ↓ 决定“这个环境创建什么、使用什么参数”
 
-关注：
+production/
+   ↓ 生产实例
 
-创建：
-
-```
-+ create
-```
-
-修改：
-
-```
-~ update
+Terraform State
+   ↓
+Azure
 ```
 
-删除：
+Module 禁止保存：
 
-```
-- destroy
-```
+- 生产订阅 ID
+- 生产密码
+- 环境专属资源名
+- 环境专属网络地址
 
-高风险：
+Environment 负责：
 
-```
-destroy database
-replace AKS
-replace network
-```
-
-必须人工审批。
+- region
+- SKU
+- capacity
+- feature flags
+- 资源组合
 
 ---
 
-# 六、权限治理设计
+# 3. 生产变更标准
 
-## Developer权限
+## 3.1 正常变更
 
-开发人员：
-
-允许：
-
-- 提交代码
-- 创建PR
-- 查看资源
-
-禁止：
-
-- terraform apply
-- 删除生产资源
-- 修改生产Portal资源
-
----
-
-## CI/CD权限
-
-采用：
-
-Azure OIDC（无长期密钥身份认证）
-
-流程：
-
-```
-GitHub Actions
-       |
-       v
-OIDC Token
-       |
-       v
-Azure Identity
-       |
-       v
-Terraform Apply
-```
-
-优势：
-
-- 无Access Key
-- 权限可审计
-- 自动过期
-
----
-
-## Production Approval
-
-生产Apply必须：
-
-```
-Terraform Plan
-       |
-       v
-人工审批
-       |
-       v
-Apply
-```
-
-审批角色：
-
-- SRE
-- Cloud Owner
-- 系统负责人
-
----
-
-# 七、安全治理 Policy as Code
-
-Policy as Code（策略即代码）：
-
-在CI阶段自动阻止风险配置。
-
-禁止：
-
-```
-公网数据库
-
-公网Key Vault
-
-开放全部端口Security Group
-
-未加密存储
-```
-
-流程：
-
-```
-Terraform Plan
-       |
-       v
-JSON Plan
-       |
-       v
-OPA Policy
-       |
-       v
-Allow / Reject
-```
-
----
-
-# 八、生产故障恢复
-
-## Terraform State损坏
-
-流程：
-
-```
-恢复Storage版本
-        |
-        v
-检查State
-        |
-        v
-terraform plan
-        |
-        v
-恢复管理
-```
-
----
-
-## 资源漂移
-
-Drift Detection（漂移检测）：
-
-定期执行：
-
-```
-terraform plan
-```
-
-发现：
-
-```
-Azure实际状态
-        !=
-Terraform代码状态
-```
-
-需要：
-
-- 修改代码
-或者
-- import重新接管
-
----
-
-# 九、企业最终治理目标
-
-最终形成：
-
-```
-需求
- |
- v
-Git PR
- |
- v
-IaC Review
- |
- v
-Security Gate
- |
- v
-Terraform Plan
- |
- v
+```text
+Issue / Change Request
+ ↓
+修改 Terraform
+ ↓
+PR
+ ↓
+fmt / validate / lint
+ ↓
+Security Scan
+ ↓
+Plan
+ ↓
+Policy Gate
+ ↓
+Review
+ ↓
 Approval
- |
- v
+ ↓
 Apply
- |
- v
-验证
- |
- v
-CMDB同步
+ ↓
+Verification
 ```
 
-达到：
+## 3.2 禁止变更
 
-- 所有资源代码化
-- 所有变更可审计
-- 所有权限最小化
-- 所有危险操作可阻断
-- 生产环境不会因为误操作重建或删除
+以下操作默认禁止：
+
+- 本地直接对生产执行 `terraform apply`
+- 本地保存生产 State
+- Portal 修改 Terraform 管理资源后不回写代码
+- 绕过 Policy Gate
+- 绕过 Environment Approval
+- 删除或覆盖 Terraform State
+- 使用长期 Azure Secret 作为 CI 身份
+
+---
+
+# 4. 变更风险分级
+
+| 等级 | 示例 | 默认处理 |
+|---|---|---|
+| L1 | Tag、描述、非关键参数 | 自动检查 + Review |
+| L2 | 普通计算资源扩容 | Review + Plan |
+| L3 | 网络、RBAC、Key Vault、数据库参数 | 强制 Policy + Approval |
+| L4 | Delete / Replace 核心资源、生产网络边界、身份权限提升 | 默认阻断，专项审批 |
+
+核心原则：**不是所有 Plan 都应该拥有同样的 Apply 权限。**
+
+---
+
+# 5. State 治理
+
+生产 State 必须使用远端 Backend，并进行环境隔离。
+
+```text
+Azure Storage Backend
+ ├── dev
+ ├── staging
+ └── production
+```
+
+要求：
+
+- State 不进入 Git
+- State 访问使用最小权限
+- 开启版本保护和恢复能力
+- 避免多人同时操作
+- 生产 State 变更必须可审计
+
+State 丢失时**不要重新创建资源**，优先恢复 State 或重新建立资源映射。
+
+---
+
+# 6. 已有资源接管
+
+```text
+Azure Existing Resource
+ ↓
+资产盘点
+ ↓
+Terraform Resource 定义
+ ↓
+terraform import
+ ↓
+terraform plan
+ ↓
+消除差异
+ ↓
+No changes
+ ↓
+正式纳管
+```
+
+出现 `destroy` 或 `-/+ replace` 时不得直接 Apply。
+
+必须先判断：
+
+1. State 是否正确？
+2. Resource ID 是否正确？
+3. Provider 是否发生行为变化？
+4. 配置是否缺失？
+5. Azure 是否存在人工漂移？
+
+---
+
+# 7. 安全治理
+
+安全控制分成四层：
+
+```text
+代码层
+ ↓
+Security Scan
+ ↓
+Plan层
+ ↓
+Policy Gate
+ ↓
+身份层
+ ↓
+RBAC / OIDC
+ ↓
+平台层
+ ↓
+Azure Policy / Resource Protection
+```
+
+其中：
+
+- Checkov 主要发现已知安全错误模式
+- Policy Gate 判断这次具体变更是否允许进入生产
+- RBAC 控制“谁能做”
+- Approval 控制“这次是否批准”
+- Azure Policy 控制云平台最终边界
+
+任何一层失败，都不能通过“换一种命令”绕过。
+
+---
+
+# 8. Apply 安全边界
+
+Apply 必须满足：
+
+```text
+代码来自受保护分支
+ AND
+CI检查通过
+ AND
+Plan 与审批对象一致
+ AND
+Policy Gate通过
+ AND
+生产环境审批通过
+ AND
+执行身份权限足够但不过度
+```
+
+特别重要：**批准的是具体 Plan，而不是一句“这个 PR 可以”。**
+
+如果代码或 Plan 在批准后发生变化，应重新生成 Plan 并重新审批。
+
+---
+
+# 9. Apply 后验证
+
+Apply 成功不等于变更成功。
+
+必须验证：
+
+```text
+Terraform Apply
+ ↓
+Terraform State
+ ↓
+Azure Resource
+ ↓
+业务可用性
+```
+
+例如 AKS：
+
+- Cluster 状态正常
+- Node Ready
+- API 可访问
+- Ingress / HTTPS 正常
+- ACR 拉取正常
+
+网络资源：
+
+- VNet / Subnet 正常
+- Route 正常
+- NSG 生效
+
+数据库：
+
+- 服务状态正常
+- 网络访问正常
+- 关键连接测试通过
+
+---
+
+# 10. Drift 治理
+
+漂移就是：
+
+```text
+Terraform代码 / State
+        ≠
+Azure实际状态
+```
+
+处理原则：
+
+```text
+发现 Drift
+ ↓
+判断是否授权变更
+ ├── 是 → 将变更回写 Terraform
+ └── 否 → 恢复 Terraform 期望状态
+```
+
+禁止简单执行 `terraform apply` 后就认为问题解决。必须先理解漂移来源。
+
+---
+
+# 11. 故障处理标准
+
+统一使用：
+
+```text
+现象
+ ↓
+判断 / 排查
+ ↓
+证据
+ ↓
+止损
+ ↓
+恢复
+ ↓
+验证
+ ↓
+长期治理
+```
+
+例如 Plan 突然要删除生产数据库：
+
+```text
+现象：Plan 出现 destroy
+ ↓
+停止 Apply
+ ↓
+保存 Plan / State / Resource ID
+ ↓
+检查 State 映射
+ ↓
+检查配置和 Provider
+ ↓
+确认数据库真实状态
+ ↓
+修复代码或 State
+ ↓
+重新 Plan
+ ↓
+确认 No unexpected changes
+```
+
+---
+
+# 12. 审计证据
+
+一次生产变更至少应能够追溯：
+
+```text
+谁提出
+ ↓
+改了什么
+ ↓
+为什么改
+ ↓
+Plan 是什么
+ ↓
+Policy 是否通过
+ ↓
+谁审批
+ ↓
+谁执行
+ ↓
+执行结果
+ ↓
+验证结果
+```
+
+因此 CI 产物、Plan、审批记录、Apply 日志和验证结果都属于生产治理证据。
+
+---
+
+# 13. 最终判断标准
+
+一个“生产 Ready”的 IaC 仓库不是“Terraform 能跑”，而是能够回答：
+
+- 什么资源由 Terraform 管？
+- 谁可以改？
+- 怎么提交？
+- 什么检查必须通过？
+- 什么变更绝对不能做？
+- 什么变更需要审批？
+- Apply 用什么身份？
+- State 怎么保护？
+- 已有资源怎么接管？
+- Drift 怎么发现？
+- Apply 后怎么验证？
+- 失败怎么止损和恢复？
+- 所有动作怎么审计？
+
+**最终目标：把“会写 Terraform”升级为“能够安全运营生产基础设施”。**
