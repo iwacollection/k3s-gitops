@@ -1,0 +1,13 @@
+{
+  "resource_changes": [
+    {"address":"azurerm_resource_group.delete_example","type":"azurerm_resource_group","change":{"actions":["delete"],"after":null}},
+    {"address":"azurerm_kubernetes_cluster.replace_example","type":"azurerm_kubernetes_cluster","change":{"actions":["delete","create"],"after":{"tags":{"Environment":"production","Owner":"platform","ManagedBy":"terraform","CostCenter":"cc-001"}}}},
+    {"address":"azurerm_role_assignment.owner_example","type":"azurerm_role_assignment","change":{"actions":["create"],"after":{"role_definition_name":"Owner"}}},
+    {"address":"azurerm_role_assignment.contributor_example","type":"azurerm_role_assignment","change":{"actions":["create"],"after":{"role_definition_name":"Contributor"}}},
+    {"address":"azurerm_storage_account.public_example","type":"azurerm_storage_account","change":{"actions":["create"],"after":{"public_network_access_enabled":true,"tags":{"Environment":"production","Owner":"platform","ManagedBy":"terraform","CostCenter":"cc-001"}}}},
+    {"address":"azurerm_postgresql_flexible_server.public_example","type":"azurerm_postgresql_flexible_server","change":{"actions":["create"],"after":{"public_network_access_enabled":true,"tags":{"Environment":"production","Owner":"platform","ManagedBy":"terraform","CostCenter":"cc-001"}}}},
+    {"address":"azurerm_key_vault.missing_tags","type":"azurerm_key_vault","change":{"actions":["create"],"after":{"tags":{"Environment":"production"}}}},
+    {"address":"azurerm_network_security_rule.ssh_public","type":"azurerm_network_security_rule","change":{"actions":["create"],"after":{"source_address_prefix":"*","destination_port_range":"22"}}},
+    {"address":"azurerm_unknown.future_example","type":"azurerm_unknown","change":{"actions":["read"]}}
+  ]
+}
