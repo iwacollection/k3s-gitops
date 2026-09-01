@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'infrastructure/terraform/**'
+      - 'policy/terraform/**'
       - '.github/workflows/**'
   workflow_dispatch:
 
@@ -60,7 +61,7 @@ jobs:
       - name: Install Conftest
         uses: princespaghetti/setup-conftest@v1
 
-      - name: Generate Terraform JSON Plan
+      - name: Install Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.15.9'
@@ -72,9 +73,16 @@ jobs:
       - name: Terraform Plan JSON
         working-directory: infrastructure/terraform/environments/production
         run: |
-          terraform plan -input=false -out=tfplan
+          terraform plan -input=false -refresh=false -lock=false -out=tfplan
           terraform show -json tfplan > tfplan.json
 
       - name: OPA Policy Validation
         run: |
-          conftest test tfplan.json --policy policy/terraform
+          conftest test infrastructure/terraform/environments/production/tfplan.json \
+            --policy policy/terraform
+
+      - name: Explain Gate Contract
+        if: failure()
+        run: |
+          echo "Terraform Policy Gate failed."
+          echo "请根据 PGxxx 规则编号修复 Terraform 变更，而不是绕过 Policy。"
