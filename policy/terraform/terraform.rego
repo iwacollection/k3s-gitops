@@ -89,7 +89,7 @@ deny contains msg if {
   tagged_resource_types[rc.type]
   after := object.get(rc.change, "after", {})
   tags := object.get(after, "tags", {})
-  present := {k | k := required_tags[_]; tags[k] != null}
+  present := {k | some k in required_tags; tags[k] != null}
   missing := required_tags - present
   count(missing) > 0
   msg := sprintf("PG007 BLOCK: 资源缺少生产必需 Tag：%s；缺失=%v。", [rc.address, missing])
