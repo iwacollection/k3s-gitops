@@ -1,140 +1,172 @@
-# IaC生产Ready验收报告
+# IaC Production Ready 验收报告
 
-## 1. 仓库定位
+> **一眼看懂：Terraform 能执行，不等于 IaC 可以安全管理生产。**
 
-本仓库定位：
+## 1. 验收目标
 
-> Azure 基础设施 IaC 管理仓库
+判断仓库是否具备：
 
-负责：
-
-- Terraform资源生命周期管理
-- AKS基础设施治理
-- Azure网络、身份、安全配置
-- 资源漂移检测
-
-不负责：
-
-- 应用镜像构建
-- 应用发布
-- Helm应用生命周期
-
----
-
-# 2. Terraform Workflow治理
-
-标准流程：
-
+```text
+代码质量
+ + 安全扫描
+ + Policy Gate
+ + Remote State
+ + Lock / Recovery
+ + OIDC / 最小权限
+ + PR / Review / Approval
+ + Apply / Verification
+ + Drift
+ + 审计 / 回滚
+ = Production Ready
 ```
+
+## 2. P0 阻断项
+
+以下任意一项失败，都不能宣布 Production Ready：
+
+- 生产使用本地 State
+- 无 State Lock
+- CI 使用长期 Azure Secret
+- 开发者可绕过审批直接 Apply
+- Policy Gate 可被任意关闭
+- 未预期 Delete / Replace 可以直接进入 Apply
+- 没有 State 恢复路径
+- 无法追踪生产变更责任人
+
+## 3. 验收矩阵
+
+| 类别 | 验收项 | 必须达到 |
+|---|---|---|
+| Git | main / PR 保护 | ✓ |
+| Git | CODEOWNERS | ✓ |
+| Terraform | fmt / validate | ✓ |
+| Terraform | Provider 锁定 | ✓ |
+| Security | Secret Scan | ✓ |
+| Security | Checkov | ✓ |
+| Policy | Policy Gate | ✓ |
+| State | Remote Backend | ✓ |
+| State | Lock | ✓ |
+| State | Recovery | ✓ |
+| IAM | OIDC | ✓ |
+| IAM | 最小权限 | ✓ |
+| Change | Review / Approval | ✓ |
+| Resource | Naming / Tag / Owner | ✓ |
+| Operations | Drift Detection | ✓ |
+| Recovery | Apply Failure | ✓ |
+| Recovery | Rollback | ✓ |
+| Audit | Evidence | ✓ |
+
+## 4. CI/CD 验收
+
+```text
 Pull Request
-    |
-    + terraform fmt
-    |
-    + terraform validate
-    |
-    + Security Scan
-    |
-    + terraform plan
-    |
-    + Plan Artifact
-    |
-    + Production Approval
-    |
-    + terraform apply
-```
-
-治理要求：
-
-- Terraform逻辑统一通过Reusable Workflow复用
-- 禁止复制多个Apply流程
-- 禁止绕过Plan直接Apply
-
----
-
-# 3. Apply安全控制
-
-生产Apply必须满足：
-
-- GitHub Environment保护
-- Approval Gate
-- Azure OIDC认证
-- 最小权限RBAC
-
-禁止：
-
-- Service Principal长期Secret
-- 本地直接terraform apply
-- 绕过审批修改生产资源
-
----
-
-# 4. Azure资源治理
-
-资源接入流程：
-
-```
-Azure Existing Resource
-        |
-        v
-资源盘点
-        |
-        v
-Terraform Resource定义
-        |
-        v
-terraform import
-        |
-        v
-terraform plan校准
-```
-
-禁止直接重新创建已有生产资源。
-
----
-
-# 5. 生产验收清单
-
-## Terraform
-
-- [ ] fmt通过
-- [ ] validate通过
-- [ ] backend标准化
-- [ ] module边界清晰
-- [ ] state受保护
-
-## Security
-
-- [ ] 公网暴露检查
-- [ ] RBAC最小权限
-- [ ] Tag治理
-- [ ] Secret扫描
-
-## Operations
-
-- [ ] Drift Detection
-- [ ] Apply后验证
-- [ ] 变更可审计
-
----
-
-# 6. 运维使用原则
-
-任何Azure资源变更必须遵循：
-
-```
-发现需求
-  |
-修改Terraform
-  |
-PR Review
-  |
-Plan确认
-  |
-Approval
-  |
+ ↓
+fmt
+ ↓
+validate
+ ↓
+lint
+ ↓
+Security Scan
+ ↓
+Plan
+ ↓
+Plan JSON
+ ↓
+Policy Gate
+ ↓
+Review
+ ↓
+Production Approval
+ ↓
 Apply
-  |
-验证
+ ↓
+Verification
 ```
 
-Terraform代码、Git提交记录、State共同组成生产基础设施审计链路。
+必须证明每一阶段的失败都能阻断下一阶段。
+
+## 5. Plan 验收
+
+重点检查：
+
+```text
+Create  → 是否必要
+Update  → 是否有业务影响
+Delete  → 是否明确批准
+Replace → 是否存在停机/数据风险
+```
+
+未预期的 Delete / Replace 必须停止流水线。
+
+## 6. 安全验收
+
+必须验证：
+
+- Secret 不进入 Git
+- Azure 使用 OIDC
+- RBAC 遵守最小权限
+- 数据库/存储公网访问符合策略
+- NSG 高风险管理端口受控
+- Policy Gate 能真正阻断违规 Plan
+
+## 7. State 验收
+
+```text
+Remote ✓
+Lock ✓
+Encryption ✓
+Recovery ✓
+Access Control ✓
+Audit ✓
+```
+
+至少实际演练一次 State 恢复，而不是只存在文档描述。
+
+## 8. 故障演练
+
+必须能够处理：
+
+- State Locked
+- State 异常
+- Plan Destroy
+- Plan Replace
+- Drift
+- Apply 失败
+- Apply 部分成功
+- 紧急变更
+
+## 9. 审计证据
+
+验收时保存：
+
+```text
+PR
+ ↓
+CI Run
+ ↓
+Plan 摘要
+ ↓
+Policy 结果
+ ↓
+Approval
+ ↓
+Apply
+ ↓
+Verification
+ ↓
+State 版本
+```
+
+## 10. 最终判定
+
+```text
+P0 全部通过
++ 核心流程验证成功
++ 故障恢复演练成功
++ 审计证据完整
+        ↓
+        PASS
+        ↓
+IaC Production Ready
+```
